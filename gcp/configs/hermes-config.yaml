@@ -1,0 +1,29 @@
+# Hermes configuration — Vertex AI (all-GCP setup)
+# Installed to ~/.hermes/config.yaml by 02-vm-install.sh
+
+model:
+  default: __HERMES_MODEL__     # flagship chat model (gemini-3.6-flash)
+  provider: vertex
+
+auxiliary:
+  mcp:
+    provider: vertex
+    model: __HERMES_MODEL_LITE__ # cheap/fast model for MCP auxiliary reasoning (gemini-3.5-flash-lite)
+
+vertex:
+  project_id: __PROJECT_ID__
+  region: __VERTEX_REGION__   # `global` for gemini-3.6-flash/flash-lite (EU-residency exception, see 00-vars.sh)
+
+# Model-picker catalog for the Vertex provider. Vertex has no /models discovery
+# route and uses ADC (no stored credential), so the picker would otherwise show
+# ONLY the current model. Declaring the catalog here makes all three selectable
+# in `/model` and the desktop picker. All three run on the `global` endpoint.
+providers:
+  vertex:
+    models:
+      - __HERMES_MODEL__            # gemini-3.6-flash  (flagship)
+      - google/gemini-3.5-flash     # strict-EU fallback (also works @ europe-west2)
+      - __HERMES_MODEL_LITE__       # gemini-3.5-flash-lite (cheapest/fastest)
+
+memory:
+  provider: openviking

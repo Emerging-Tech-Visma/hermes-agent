@@ -1,0 +1,24 @@
+[Unit]
+# The dashboard IS the "secure gateway" endpoint: the desktop app and your
+# browser both connect to it through an IAP tunnel from your PC.
+Description=Hermes dashboard — remote backend for the desktop app / browser
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=HOME=__HOME__
+Environment=HERMES_HOME=__HOME__/.hermes
+Environment=PATH=__HOME__/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+WorkingDirectory=__HOME__/.hermes
+# --host 0.0.0.0 is REQUIRED, not a shortcut: Hermes only engages its basic-auth
+# provider on a non-loopback bind. On 127.0.0.1 the dashboard runs with auth OFF
+# and the desktop app fails with "Remote gateway incomplete". This is safe here
+# because the VM has no external IP and the firewall only admits Google's IAP range.
+ExecStart=__HOME__/.local/bin/hermes dashboard --host 0.0.0.0 --port __PORT__ --no-open --skip-build
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

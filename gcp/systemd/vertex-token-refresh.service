@@ -1,0 +1,6 @@
+[Unit]
+Description=Refresh Vertex OAuth token for OpenViking VLM
+
+[Service]
+Type=oneshot
+ExecStart=__HOME__/.local/bin/vertex-token-refresh.sh

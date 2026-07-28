@@ -1,0 +1,11 @@
+{
+  "baseUrl": "http://localhost:8000",
+  "hosts": {
+    "hermes": {
+      "enabled": true,
+      "aiPeer": "hermes",
+      "peerName": "__PEER_NAME__",
+      "workspace": "hermes"
+    }
+  }
+}

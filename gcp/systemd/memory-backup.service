@@ -1,0 +1,8 @@
+[Unit]
+Description=Backup OpenViking workspace to GCS
+
+[Service]
+Type=oneshot
+Environment=MEMORY_BUCKET=__BUCKET__
+Environment=WORKSPACE=__WORKSPACE__
+ExecStart=__HOME__/.local/bin/memory-backup.sh

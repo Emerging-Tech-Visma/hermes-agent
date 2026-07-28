@@ -1,0 +1,40 @@
+# ---------------------------------------------------------------------------
+# Secrets — NEVER commit. This repo documents infrastructure; credentials live
+# on the VM or in your shell, never here. See AGENTS.md "Conventions".
+# ---------------------------------------------------------------------------
+.env
+.env.*
+!.env.template
+!*.env.template
+*.pem
+*.key
+*credentials*
+*secret*
+dashpw*
+service-account*.json
+*-key.json
+
+# Rendered configs (templates use __PLACEHOLDER__ tokens; the filled-in
+# versions can contain project-specific or sensitive values)
+**/config.yaml.rendered
+**/*.rendered
+
+# ---------------------------------------------------------------------------
+# OS / editor noise
+# ---------------------------------------------------------------------------
+.DS_Store
+**/.DS_Store
+Thumbs.db
+*.swp
+*~
+.idea/
+.vscode/
+
+# ---------------------------------------------------------------------------
+# Scratch / local working files
+# ---------------------------------------------------------------------------
+scratch/
+tmp/
+*.log
+*.bak
+*.bak-*

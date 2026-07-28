@@ -1,0 +1,16 @@
+{
+  "storage": {
+    "workspace": "__WORKSPACE__"
+  },
+  "embedding": {
+    "provider": "gemini",
+    "model": "__EMBEDDING_MODEL__"
+  },
+  "vlm": {
+    "provider": "openai",
+    "_comment": "EU-residency: replace 'global' with a European region (e.g. europe-west2) that serves the model via the OpenAI-compat endpoint; probe before enabling.",
+    "api_base": "https://aiplatform.googleapis.com/v1/projects/__PROJECT_ID__/locations/global/endpoints/openapi",
+    "model": "__HERMES_MODEL__",
+    "api_key": "__VERTEX_TOKEN__"
+  }
+}

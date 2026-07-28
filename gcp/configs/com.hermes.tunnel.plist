@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  macOS LaunchAgent: persistent, self-healing SSH tunnel to the Hermes VM dashboard.
+  Install to ~/Library/LaunchAgents/com.hermes.tunnel.plist  (see DESKTOP-SETUP.md §3).
+
+  Keeps localhost:9119 forwarded to the VM's dashboard. RunAtLoad starts it at login;
+  KeepAlive restarts it on any drop (network blip, Mac sleep/wake, VM reboot), so the
+  desktop app reconnects on its own each morning — no manual tunnel command.
+
+  Adjust for your machine before installing:
+    - gcloud path: `which gcloud`  (Apple-Silicon Homebrew: /opt/homebrew/bin/gcloud;
+      Intel: /usr/local/bin/gcloud; SDK installer: ~/google-cloud-sdk/bin/gcloud)
+    - the two /Users/<you>/ paths below (CLOUDSDK_CONFIG + log)
+    - zone if not europe-west1-b
+  Uses `gcloud compute ssh` (not raw ssh) so it re-resolves the VM's IP each connect
+  and survives live-migration; only requires your existing gcloud auth.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.hermes.tunnel</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/gcloud</string>
+    <string>compute</string>
+    <string>ssh</string>
+    <string>hermes-agent</string>
+    <string>--zone=europe-west1-b</string>
+    <string>--quiet</string>
+    <string>--</string>
+    <string>-L</string>
+    <string>9119:localhost:9119</string>
+    <string>-N</string>
+    <string>-o</string>
+    <string>ServerAliveInterval=15</string>
+    <string>-o</string>
+    <string>ServerAliveCountMax=3</string>
+    <string>-o</string>
+    <string>ExitOnForwardFailure=yes</string>
+  </array>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>15</integer>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>CLOUDSDK_CONFIG</key>
+    <string>/Users/kennetkusk/.config/gcloud</string>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>/Users/kennetkusk/Library/Logs/hermes-tunnel.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/kennetkusk/Library/Logs/hermes-tunnel.log</string>
+</dict>
+</plist>

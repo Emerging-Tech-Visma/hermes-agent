@@ -1,0 +1,15 @@
+[Unit]
+Description=Hermes web dashboard (remote backend for desktop app / browser)
+After=network-online.target
+
+[Service]
+Type=simple
+# Binds 0.0.0.0 so the basic-auth gate engages (loopback bind runs auth OFF).
+# Reach it safely via SSH tunnel — do NOT open port __PORT__ in the GCP firewall.
+# Credentials are read from ~/.hermes/.env (HERMES_DASHBOARD_BASIC_AUTH_*).
+ExecStart=__HOME__/.local/bin/hermes dashboard --host 0.0.0.0 --port __PORT__ --no-open --skip-build
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

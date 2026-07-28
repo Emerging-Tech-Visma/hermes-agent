@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  macOS LaunchAgent that keeps the secure gateway (IAP tunnel) up.
+
+  Without this the tunnel dies on sleep/reboot and the desktop app shows
+  "Remote gateway sign-in required" every morning. KeepAlive restarts it
+  automatically; reconnect after wake takes ~20-40s (launchd throttle +
+  gcloud cold start), so give it a moment before the app reconnects.
+
+  Install:
+    cp com.hermes.gateway-tunnel.plist ~/Library/LaunchAgents/
+    # EDIT the two paths below first (see comments)
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.hermes.gateway-tunnel.plist
+    launchctl kickstart -k gui/$(id -u)/com.hermes.gateway-tunnel
+
+  Manage:
+    launchctl kickstart -k gui/$(id -u)/com.hermes.gateway-tunnel   # force reconnect
+    launchctl bootout   gui/$(id -u)/com.hermes.gateway-tunnel      # stop + disable
+    tail -f ~/Library/Logs/hermes-gateway-tunnel.log
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.hermes.gateway-tunnel</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <!-- EDIT: absolute path to gcloud. Find it with `which gcloud`.
+         launchd does not read your shell profile, so a bare "gcloud" fails. -->
+    <string>/opt/homebrew/bin/gcloud</string>
+    <string>compute</string>
+    <string>start-iap-tunnel</string>
+    <string>hermes-agent</string>
+    <string>9119</string>
+    <string>--local-host-port=localhost:9119</string>
+    <string>--zone=europe-west2-b</string>
+    <string>--project=test-disco-cm</string>
+  </array>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <!-- Don't hammer gcloud if it fails repeatedly. -->
+  <key>ThrottleInterval</key>
+  <integer>20</integer>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <!-- EDIT: replace <you> with your macOS username. gcloud needs a sane PATH
+         and a HOME to find its ADC credentials. -->
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>HOME</key>
+    <string>/Users/&lt;you&gt;</string>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>/tmp/hermes-gateway-tunnel.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/hermes-gateway-tunnel.log</string>
+</dict>
+</plist>

@@ -1,0 +1,44 @@
+#  ⚠️  FALLBACK ONLY — normally NOT the unit that runs.
+#
+#  The Hermes installer generates its own `hermes-gateway.service` at this same
+#  path, and that one is strictly better: it encodes Hermes' restart semantics
+#  (RestartForceExitStatus=75, RestartPreventExitStatus=78), KillMode=mixed, a
+#  SIGUSR1 ExecReload, an ExecStopPost cgroup cleanup, and the venv
+#  PATH/VIRTUAL_ENV. Verified on a real install 2026-07-28: the installer's unit
+#  is what ends up live.
+#
+#  02-vm-install.sh therefore does NOT overwrite an installer-provided unit; it
+#  only falls back to this file if no unit exists and `hermes gateway install`
+#  is unavailable. Prefer `hermes gateway install` over this template.
+#
+#  Note RestartPreventExitStatus=78 in the installer's unit: a Hermes config
+#  error exits 78 and deliberately does NOT restart-loop. A gateway that is
+#  `inactive (dead)` right after a config change is usually that — check the
+#  journal rather than forcing restarts. See OPS-NOTES.md §2.
+
+[Unit]
+# The gateway runs cron jobs / routines and any messaging platform connections.
+# The desktop app does NOT need this (it talks to the dashboard) — but scheduled
+# work does. See OPS-NOTES.md §2 for idle / stuck-gateway recovery.
+Description=Hermes gateway — cron, routines, messaging platforms
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=HOME=__HOME__
+Environment=HERMES_HOME=__HOME__/.hermes
+Environment=PATH=__HOME__/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+WorkingDirectory=__HOME__/.hermes
+ExecStart=__HOME__/.local/bin/hermes gateway run
+# The gateway can wedge on a hung tool call or a dropped upstream connection
+# rather than exiting. Restart=always only covers actual exits; the watchdog
+# timer in OPS-NOTES.md §2 handles the "alive but idle" case.
+Restart=always
+RestartSec=10
+# Give in-flight agent turns a chance to finish before SIGKILL.
+TimeoutStopSec=30
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

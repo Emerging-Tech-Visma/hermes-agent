@@ -1,0 +1,71 @@
+# SearXNG settings — copied to ~/searxng/settings.yml by 02-vm-install.sh,
+# which then substitutes a freshly generated secret_key.
+#
+# Two settings here are load-bearing for Hermes and easy to get wrong:
+#
+#   1. search.formats MUST include `json`. SearXNG's default is HTML only, and
+#      without `json` every Hermes web_search call returns HTTP 403 "Forbidden
+#      format". This is the single most common "SearXNG is running but Hermes
+#      can't search" cause.
+#
+#   2. server.limiter MUST be false. The limiter is bot detection intended for
+#      public instances; it blocks programmatic API clients like Hermes. Safe to
+#      disable because this instance is bound to 127.0.0.1 and only Hermes on
+#      this VM can reach it.
+
+use_default_settings: true
+
+general:
+  instance_name: "Hermes Search"
+  # No public-facing pages needed.
+  enable_metrics: false
+
+server:
+  # Substituted at install time with `openssl rand -hex 32`.
+  secret_key: "__SEARXNG_SECRET__"
+  # See note 2 above — required for API access.
+  limiter: false
+  public_instance: false
+  image_proxy: false
+  bind_address: "0.0.0.0"   # inside the container only; published on 127.0.0.1
+
+search:
+  safe_search: 0
+  autocomplete: ""
+  # See note 1 above — `json` is what Hermes needs.
+  formats:
+    - html
+    - json
+
+ui:
+  static_use_hash: true
+
+# Explicitly enable the engines that matter for agent use. NOTE: because
+# `use_default_settings: true` is set above, this block MERGES with SearXNG's
+# defaults — it does not reduce the engine list to just these six. Other default
+# engines stay active. To actually turn one off, add it here with
+# `disabled: true`.
+#
+# If results dry up, an upstream engine is usually blocking the Cloud NAT egress
+# IP. Disable that one and the others carry the query (see OPS-NOTES.md §4).
+engines:
+  - name: google
+    disabled: false
+  - name: duckduckgo
+    disabled: false
+  - name: brave
+    disabled: false
+  - name: wikipedia
+    disabled: false
+  - name: github
+    disabled: false
+  - name: stackoverflow
+    disabled: false
+
+outgoing:
+  # Upstream engines are reached through Cloud NAT. Generous timeouts because
+  # NAT adds a hop and agents tolerate latency better than failures.
+  request_timeout: 10.0
+  max_request_timeout: 20.0
+  pool_connections: 100
+  pool_maxsize: 20

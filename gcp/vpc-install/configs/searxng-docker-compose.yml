@@ -1,0 +1,46 @@
+# Self-hosted SearXNG — copied to ~/searxng/docker-compose.yml by 02-vm-install.sh.
+#
+# This is the "local search engine" for Hermes. It replaces SerpApi: SerpApi has
+# no self-hostable server (its GitHub org is client libraries + an MCP wrapper
+# around the hosted API), is not a Hermes web backend, and offers no EU data
+# residency. SearXNG IS a native Hermes backend (`searxng` / SEARXNG_URL), runs
+# entirely on this VM, needs no API key, and keeps queries in-region.
+#
+# Queries leave the VM via Cloud NAT to the upstream engines SearXNG proxies —
+# that is inherent to metasearch. Nothing is sent to a search SaaS that stores
+# your query history against an account.
+
+services:
+  valkey:
+    container_name: searxng-valkey
+    image: docker.io/valkey/valkey:8-alpine
+    command: valkey-server --save 30 1 --loglevel warning
+    restart: unless-stopped
+    networks: [searxng]
+    volumes:
+      - valkey-data:/data
+    cap_drop: [ALL]
+    cap_add: [SETGID, SETUID, DAC_OVERRIDE]
+
+  searxng:
+    container_name: searxng
+    image: docker.io/searxng/searxng:latest
+    restart: unless-stopped
+    networks: [searxng]
+    # Bound to 127.0.0.1 — reachable only from the VM itself. Hermes connects
+    # over localhost. Never expose this port; SearXNG has no authentication.
+    ports:
+      - "127.0.0.1:__SEARXNG_PORT__:8080"
+    volumes:
+      - ./settings.yml:/etc/searxng/settings.yml:rw
+    environment:
+      - SEARXNG_BASE_URL=http://localhost:__SEARXNG_PORT__/
+      - SEARXNG_REDIS_URL=redis://valkey:6379/0
+    depends_on:
+      - valkey
+
+networks:
+  searxng:
+
+volumes:
+  valkey-data:

@@ -1,0 +1,43 @@
+# Slack app manifest — Hermes employee support bot (Socket Mode, DM-first)
+# Paste at https://api.slack.com/apps → "Create New App" → "From an app manifest".
+# Least-privilege for a locked-down support desk: employees DM the bot (and can @mention it).
+# No channel-history scopes — this bot is not a channel listener.
+#
+# NOT in this manifest (create in the UI after import — see SUPPORT-BOT-SETUP.md §6):
+#   - the app-level token (xapp-…, scope connections:write) for Socket Mode
+#   - the bot token (xoxb-…), issued when you Install to Workspace
+display_information:
+  name: Hermes Support
+  description: Internal support assistant — answers only from the company knowledge base.
+  background_color: "#0b1020"
+
+features:
+  bot_user:
+    display_name: Hermes Support
+    always_online: true
+  app_home:
+    home_tab_enabled: false
+    messages_tab_enabled: true            # lets employees DM the bot from the Messages tab
+    messages_tab_read_only_enabled: false
+
+oauth_config:
+  scopes:
+    bot:
+      - chat:write            # send replies
+      - app_mentions:read     # see @mentions (so they can tag the bot in a DM)
+      - im:history            # read direct-message content
+      - im:read               # basic DM metadata
+      - im:write              # open/continue a DM (needed for any proactive/cron message)
+      - users:read            # resolve user IDs → names (personalization / per-user memory)
+
+settings:
+  event_subscriptions:
+    # No request_url: Socket Mode delivers events over an outbound WebSocket.
+    bot_events:
+      - message.im            # a DM was sent to the bot
+      - app_mention           # the bot was @mentioned
+  interactivity:
+    is_enabled: false         # no buttons/modals; pure chat
+  socket_mode_enabled: true
+  org_deploy_enabled: false
+  token_rotation_enabled: false

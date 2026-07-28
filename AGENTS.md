@@ -1,0 +1,311 @@
+# Hermes Agent on GCP — Replication Runbook
+
+This repo documents how to install a **Hermes agent** ([nousresearch](https://hermes-agent.nousresearch.com))
+on **Google Cloud** so it can be rebuilt from scratch on a new project/VM. The
+scripted install lives in [`gcp/`](gcp/); this file is the human-readable "why"
+and the lessons learned. Read this before running an install or debugging one.
+
+> Purpose: this is a **learning / reference project** — document *everything* so a
+> new installation can be reproduced without rediscovering the gotchas.
+
+## What gets built
+
+```
+Slack (Socket Mode)  ┐
+Desktop app / browser ┼─► Hermes gateway + dashboard on a GCE VM
+                      ┘        ├─ chat model:  Vertex AI  gemini-3.6-flash (region: global — EU-residency exception)
+                               ├─ knowledge:   Vertex AI Search (Google Drive connector + verified URLs) via MCP
+                               └─ memory:      self-hosted Honcho (Docker: FastAPI + Postgres/pgvector, :8000)
+```
+
+All inference (chat, embeddings) bills to the GCP project via the VM's **attached
+service account** (Application Default Credentials — no key files). The one
+exception is Honcho's background reasoning, which needs its own AI Studio Gemini +
+OpenAI keys (Honcho has no Vertex support).
+
+## Canonical facts
+
+### Current install — v0.11.1, private VPC (built 2026-07-28)
+
+The live install is the **[`gcp/vpc-install/`](gcp/vpc-install/)** package. The v1 table
+in the next subsection is **historical** — that VM had been deleted (verified 2026-07-28:
+`gcloud compute instances list` returned 0 items) and was rebuilt on the new
+architecture.
+
+| Thing | Value | Verified |
+|---|---|---|
+| Project ID / number | `test-disco-cm` / `881765721010` | ✅ |
+| Region / zone (**infrastructure / data at rest**) | `europe-west2` / `europe-west2-b` (London, **UK — not EU-member**) | ✅ |
+| VPC / subnet | `hermes-vpc` / `hermes-subnet` `10.10.0.0/24`, Private Google Access **on** | ✅ |
+| VM | `hermes-agent`, `e2-standard-4`, **Ubuntu 26.04 LTS**, 100 GB pd-balanced, Shielded, OS Login | ✅ |
+| VM internal IP / external | `10.10.0.2` / **none** | ✅ |
+| Egress | Cloud NAT `hermes-nat` via router `hermes-router` | ✅ |
+| Ingress | `35.235.240.0/20` (IAP) → `tcp:22`, `tcp:9119`, target-tag `hermes-agent`; deny-all @ 65000. **No `0.0.0.0/0` allow rule exists.** | ✅ |
+| Gateway to client | `gcloud compute start-iap-tunnel … 9119` → desktop app / browser at `localhost:9119` | — |
+| Service account | `hermes-agent@test-disco-cm.iam.gserviceaccount.com` (`aiplatform.user`, `storage.objectAdmin`) | ✅ |
+| Chat model / Vertex region | `google/gemini-3.6-flash` (default) + `gemini-3.5-flash` + `gemini-3.5-flash-lite` / **`global`** — ⚠️ EU-residency exception, **inference only**; VM/bucket stay `europe-west2` | ✅ probed 200/200/200 |
+| Web search | self-hosted **SearXNG**, Docker, `127.0.0.1:8080`, JSON API on | — |
+| Browser | Chrome + Playwright Chromium, headless | — |
+| Memory | self-hosted Honcho, Docker, `127.0.0.1:8000` | — |
+| Dashboard | `:9119`, bound `0.0.0.0` (required for auth), basic-auth, IAP-tunnel-only | — |
+| Backup bucket | `gs://test-disco-cm-hermes-memory` | ✅ |
+
+Operator IAM required to reach it: `roles/iap.tunnelResourceAccessor` + `roles/compute.osLogin`.
+
+### v1 install (historical — public IP, `europe-west1`, `global` endpoint)
+
+Kept because the Slack / knowledge / profiles guides still reference it. **The VM
+described here no longer exists.**
+
+| Thing | Value |
+|---|---|
+| Project ID / number | `test-disco-cm` / `881765721010` |
+| Region / zone (VM, bucket) | `europe-west1` / `europe-west1-b` (EU-proper, Belgium) |
+| VM | `hermes-agent`, `e2-standard-2`, Ubuntu 24.04, 50 GB pd-balanced |
+| Service account | `hermes-agent@test-disco-cm.iam.gserviceaccount.com` (`roles/aiplatform.user`, `roles/storage.objectAdmin`, `roles/discoveryengine.viewer`) |
+| Memory backup bucket | `gs://test-disco-cm-hermes-memory` |
+| Chat model / Vertex region | `google/gemini-3.6-flash` (default); picker also offers `gemini-3.5-flash` + `gemini-3.5-flash-lite` (via `providers.vertex.models`) / `global` — ⚠️ EU-residency exception, see below |
+| Embedding model | `gemini-embedding-2-preview` (only if using OpenViking) |
+| Dashboard | `:9119`, basic-auth, tunnel-only (never firewalled open) |
+| Honcho | `:8000`, localhost-only |
+
+All of these are variables in [`gcp/00-vars.sh`](gcp/00-vars.sh) — change them there
+to target a new project/VM.
+
+## EU data residency (hard requirement)
+
+**Rule:** all GCP services should run in a European region. Verified state: VM + bucket in
+`europe-west1` (Belgium, EU). **Chat inference is the standing exception (see below).**
+
+⚠️ **EU-residency EXCEPTION for the chat model (explicit owner decision, 2026-07-22).**
+Hermes chat now runs the latest Gemini 3.x flash models — `gemini-3.6-flash` (default) and
+`gemini-3.5-flash-lite` (switchable via `/model`) — on the Vertex **`global`** endpoint, which
+is NOT region-pinned. This knowingly relaxes the "regional European endpoint only" rule to get
+the newest models. Everything else (VM, bucket, KG, datastore) stays EU-region-pinned.
+
+The catch, established by direct API probing (do not re-litigate without re-probing):
+- **`gemini-3.6-flash` and `gemini-3.5-flash-lite` are Vertex `global`-only right now**
+  (probed 2026-07-22: 200 @ `global`; **404 in all 12 European regional endpoints** —
+  west1/2/3/4/6/8/9/12, central2, southwest1, north1/2). The AI-Studio docs page
+  (`ai.google.dev`) lists them, but AI Studio ≠ Vertex; Vertex EU regions don't serve them yet.
+- **`gemini-3.5-flash` is the only 3.x flash on a regional EU endpoint** — 200 @ `europe-west2`
+  (London), 404 in every EU-*member* region. It is the **strict-EU fallback**.
+- **EU-member regions top out at `gemini-2.5-flash` / `gemini-2.5-pro`** (200 in europe-west1).
+
+**Re-probed 2026-07-28 (still holds):** `gemini-3.5-flash` → **200** @ `europe-west2`,
+**404** @ `europe-west1` / `europe-west4`, 200 @ `global`. At `europe-west2`:
+`gemini-2.5-flash` 200, but `gemini-2.5-pro` **404** and `gemini-3.6-flash` /
+`gemini-3.5-flash-lite` **404**. So a west2 model catalog is exactly
+`{gemini-3.5-flash, gemini-2.5-flash}`.
+
+**Re-probed again 2026-07-28 (v0.11.0 decision):** `gemini-3.6-flash` 404 in
+europe-west1/2/3/4 and north1, **200 @ `global`**; `gemini-3.5-flash-lite` likewise
+`global`-only. [`gcp/vpc-install/`](gcp/vpc-install/) therefore runs
+**`VERTEX_REGION=global`** with the catalog
+`{gemini-3.6-flash (default), gemini-3.5-flash, gemini-3.5-flash-lite}` — the
+**EU-residency exception applies to INFERENCE ONLY**; VM, subnet, bucket, backups,
+SearXNG and Honcho all remain in `europe-west2`. All three probed 200 from the VM's
+own service account.
+
+**Reverting to strict EU residency:** set `VERTEX_REGION=europe-west2` + `HERMES_MODEL=google/gemini-3.5-flash`
+(European, regional — UK/adequacy caveat), or `europe-west1` + `gemini-2.5-flash` for strict
+EU-*member* residency. **Re-probe on every revisit** — flip back to a regional endpoint the moment
+3.6-flash / flash-lite land in an EU region.
+
+Probe any model/region before assuming availability:
+```bash
+# on the VM
+TOKEN=$(curl -sf -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token | python3 -c 'import sys,json;print(json.load(sys.stdin)["access_token"])')
+curl -s -o /dev/null -w '%{http_code}\n' -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  "https://REGION-aiplatform.googleapis.com/v1/projects/test-disco-cm/locations/REGION/publishers/google/models/MODEL:generateContent" \
+  -d '{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}'
+```
+Also EU-pin anything added later: GCS `--location=europe-west1`, Vertex AI Search
+datastore in an EU multi-region/`eu`, and if OpenViking is ever enabled its
+`GOOGLE_CLOUD_LOCATION` (hardcoded `global` in `systemd/openviking.service`) must change.
+
+## Install order
+
+1. **Locally** (workstation with `gcloud`, project owner): `bash gcp/01-gcp-setup.sh`
+   — enables APIs, creates SA + bucket + VM, copies files to the VM.
+2. **On the VM** (`gcloud compute ssh hermes-agent --zone=europe-west1-b`):
+   `export HERMES_DASHBOARD_PASSWORD='...'` then `bash ~/hermes-install/02-vm-install.sh`
+   — installs Hermes, memory provider, dashboard service, systemd units.
+3. **On the VM**: fill `~/honcho/.env` (Gemini + OpenAI keys), `cd ~/honcho && sudo docker compose up -d`.
+4. **On the VM**: `bash ~/hermes-install/03-verify.sh` (targets 7/7 pass).
+5. Then the manual, credential-bearing pieces:
+   [`gcp/DESKTOP-SETUP.md`](gcp/DESKTOP-SETUP.md),
+   [`gcp/SLACK-TEAM-SETUP.md`](gcp/SLACK-TEAM-SETUP.md),
+   [`gcp/KNOWLEDGE-DATASTORE.md`](gcp/KNOWLEDGE-DATASTORE.md).
+   - Variant: [`gcp/SUPPORT-BOT-SETUP.md`](gcp/SUPPORT-BOT-SETUP.md) — a **locked-down
+     per-employee support bot** (DM-per-employee session + isolation, per-employee Honcho
+     memory, `SOUL.md` persona on its own profile, `agent.disabled_toolsets` so the agent
+     can *only* search the knowledge base). Sits on top of the Slack + knowledge guides.
+   - Multi-agent variant: [`gcp/PROFILES-ISOLATION.md`](gcp/PROFILES-ISOLATION.md) — run
+     **several isolated Slack agents on the one VM** via Hermes **profiles** (own persona /
+     memory / knowledge / tools / Slack app per profile). Key facts: each profile needs its
+     **own Slack app** (tokens can't be shared), and filesystem/`HOME` is **shared until you
+     set `terminal.home_mode: profile`** — profiles are config/state isolation, not an OS sandbox.
+   - Knowledge variant: [`gcp/EXTERNAL-KG-MCP.md`](gcp/EXTERNAL-KG-MCP.md) — instead of
+     building our own datastore, point Hermes at an **existing knowledge base in the Visma
+     Agentic Platform (ETAP)** via that platform's per-graph **MCP server** + bearer token
+     (verified working 2026-07-20; reuse vs. build-your-own trade documented there).
+   - **Private-network variant (recommended for new installs):**
+     [`gcp/vpc-install/`](gcp/vpc-install/) — a **complete alternative to steps 1–4
+     above**, not an add-on. Custom VPC + Cloud NAT, VM with **no external IP**,
+     ingress only from Google's IAP range, Ubuntu 26.04, Chrome + Playwright,
+     self-hosted SearXNG (replaces SerpApi/hosted search), Honcho, and
+     `gemini-3.5-flash` @ `europe-west2`. Desktop app + browser connect over
+     `gcloud compute start-iap-tunnel` instead of a plain SSH tunnel. Guides:
+     [`README.md`](gcp/vpc-install/README.md) ·
+     [`INSTALL.md`](gcp/vpc-install/INSTALL.md) ·
+     [`OPS-NOTES.md`](gcp/vpc-install/OPS-NOTES.md) (idle-gateway recovery, backend
+     upgrades, service updates).
+   - Worked example (plan): [`gcp/SUBPROCESSOR-MONITOR-PLAN.md`](gcp/SUBPROCESSOR-MONITOR-PLAN.md)
+     — a **propose-only, approval-gated compliance agent** (GDPR subprocessor monitor) as a
+     dedicated profile. Shows the three-plane split (GCP deterministic core + authority lane
+     built first; thin Hermes agent mounted last), why **Vertex-EU inference** is the reason to
+     host it on Hermes vs. ETAP, and how to reconstruct the propose-only boundary on Hermes
+     (read/propose MCP tools only + `disabled_toolsets`; loader is an unreachable GCP service).
+
+Distilled env-var / MCP-config / skills / troubleshooting reference (from the official
+docs, keyed to our setup): [`gcp/REFERENCE.md`](gcp/REFERENCE.md).
+
+## Lessons learned (the gotchas — DON'T rediscover these)
+
+- **Service account IAM race.** Right after `gcloud iam service-accounts create`, an
+  immediate `add-iam-policy-binding` can fail with "does not exist" — the SA hasn't
+  propagated. Wait/poll until `gcloud iam service-accounts describe` succeeds, then
+  bind. `01-gcp-setup.sh` is idempotent, so re-running it also recovers.
+- **`gcloud compute scp --recurse` of a dir into an existing target nests it**
+  (`hermes-install/gcp/...`). Re-runs cause this. `01` now `rm -rf`s the remote dir
+  first; if you scp by hand, delete the target first.
+- **Dashboard auth only engages on a non-loopback bind.** `hermes dashboard` on
+  `127.0.0.1` runs with auth OFF; the desktop app then can't sign in. Bind
+  `--host 0.0.0.0` (auth ON) and reach it via SSH tunnel — never open :9119 in the
+  firewall. This is why `hermes-dashboard.service` uses `0.0.0.0`.
+- **There is no session token to copy.** Older notes say "enter a session token" —
+  in this version the desktop app just **signs in** with username/password and reuses
+  the session automatically. If the app says "Remote gateway incomplete", the backend
+  has no auth provider (loopback bind) — fix the bind, not the token.
+- **`.env` credential duplication silently breaks login.** Appending auth lines twice
+  (or leaving a `<placeholder>` password) leaves multiple
+  `HERMES_DASHBOARD_BASIC_AUTH_*` sets; the wrong one wins. Always use
+  [`gcp/scripts/dashboard-setup.sh`](gcp/scripts/dashboard-setup.sh) — it strips ALL
+  existing lines then writes exactly one clean set. Note the file is `~/.hermes/.env`,
+  NOT `~/.env`.
+- **Wrong-machine paste is the #1 time sink.** Watch the prompt: `kennetkusk@hermes-agent`
+  = VM, `kennetkusk@Mac` = laptop. Config/auth commands must run on the VM. When in
+  doubt wrap them: `gcloud compute ssh hermes-agent --zone=europe-west1-b --command='...'`
+  runs on the VM regardless of where your prompt is. (macOS `sed -i` also differs from
+  Linux — another reason to run edits on the VM.)
+- **`gcloud compute ssh` intermittently exits 255** (transient SSH). Just retry; the
+  scripts are idempotent.
+- **Vertex health check must be a real call.** A GET on a model resource can 404 even
+  when inference works; verify with a `:generateContent` POST (see `03-verify.sh`).
+- **Vertex model picker shows only the current model unless you declare a catalog.**
+  Vertex has no `/models` discovery route and uses ADC (no stored credential), so Hermes'
+  `/model` picker (and the desktop dropdown) lists ONLY the currently-configured model — the
+  other switchable models never appear. Fix is pure config, not a code edit: add a
+  `providers.vertex.models:` list to `config.yaml` (see `configs/hermes-config.yaml`); those
+  IDs then show as selectable rows. Editing the shipped curated list (`hermes_cli/models.py`
+  `_PROVIDER_MODELS`) only affects the CLI `hermes model` flow, not the desktop picker, and is
+  not upgrade-safe — don't. Applies **per profile**: the serving profile's own
+  `config.yaml` (e.g. `~/.hermes/profiles/<name>/config.yaml`) needs the block, not just the base.
+- **Vertex region ≠ AI-Studio availability.** See "EU data residency" above — the latest
+  flash models (`gemini-3.6-flash`, `gemini-3.5-flash-lite`) are Vertex `global`-only; only
+  `gemini-3.5-flash` is on a regional EU endpoint (europe-west2), and EU-member regions cap at
+  2.5. The AI-Studio docs page lists models Vertex EU may not serve — always probe Vertex, not
+  AI Studio. `03-verify.sh` now passes on `europe-*` OR the accepted `global`, and prints a
+  residency warning when `global` is in use.
+- **Tunnel dies on VM stop / Mac sleep.** The dashboard is a systemd service and
+  self-heals on VM reboot; only the Mac-side tunnel needs rerunning.
+- **Dashboard sessions expire every 12h** (`HERMES_DASHBOARD_BASIC_AUTH_TTL_SECONDS`
+  default) — re-login is expected, not a fault. For anything past the pilot, replace the
+  plaintext password with `HERMES_DASHBOARD_BASIC_AUTH_PASSWORD_HASH` (scrypt).
+- **External KG-over-MCP: rotate breaks Hermes silently; don't double the Bearer.** Reusing an
+  ETAP "Database" (Knowledge Graph) via its MCP server ([`gcp/EXTERNAL-KG-MCP.md`](gcp/EXTERNAL-KG-MCP.md))
+  ties Hermes to a **show-once bearer token**. Rotating/Detaching in ETAP invalidates it and does
+  **not** notify Hermes — a burst of MCP 401s means "someone rotated in ETAP", re-paste the token.
+  And with AUTHENTICATION=`Bearer token` the client adds the scheme itself: paste the raw `kgmcp_…`,
+  never `Bearer kgmcp_…` (double scheme → 401).
+- **Slack open access needs the App-Home Messages tab, not just the Hermes toggle.**
+  `SLACK_ALLOW_ALL_USERS=true` (all-employee support bot) is the *Hermes*-side gate, but employees
+  still can't DM the bot unless the Slack app's **App Home → Messages tab is ON**. Also generate an
+  **app-level token** (`xapp-…`, scope `connections:write`) for Socket Mode — the manifest can't mint
+  it. Signing secret / verification token are NOT used in Socket Mode.
+- **SerpApi cannot be self-hosted and is not a Hermes backend.** Established
+  2026-07-28 from the installed v0.19.0 source: the web backends are exactly
+  `{parallel, firecrawl, tavily, exa, searxng, brave-free, ddgs, xai}`
+  (`tools/web_tools.py` `_LEGACY_WEB_BACKENDS`). SerpApi's GitHub org is client
+  libraries + an MCP wrapper around the **hosted** API — no self-hostable server —
+  and it publishes no EU data-residency option. **SearXNG** is the native, local,
+  key-free, EU-resident answer (`SEARXNG_URL`, backend name `searxng`).
+- **SearXNG has two settings that silently break Hermes.** `search.formats` must
+  include `json` (SearXNG defaults to HTML only → every Hermes search gets HTTP 403
+  "Forbidden format" — the #1 "SearXNG is up but search fails" cause), and
+  `server.limiter` must be `false` (the limiter is bot detection that blocks
+  programmatic clients). Both safe when bound to `127.0.0.1`.
+- **IAP TCP forwarding needs a firewall rule for each forwarded port.** A no-external-IP
+  VM reached over `gcloud compute start-iap-tunnel` still needs
+  `allow ingress 35.235.240.0/20 → tcp:<port>`, including the dashboard's 9119. That
+  range is Google's IAP frontend, not the internet, and use is gated by
+  `roles/iap.tunnelResourceAccessor` — so this is not a public exposure.
+- **No external IP ⇒ Cloud NAT is mandatory, not optional.** Private Google Access
+  only covers *Google* APIs (Vertex, GCS). Without a Cloud Router + NAT, `apt`, the
+  Hermes installer, Docker Hub, Playwright/Chrome downloads, and **SearXNG's upstream
+  engine fetches** all fail. NAT also bills while the VM is stopped.
+- **`terminal.backend: ssh` exists** (`terminal.ssh_host` / `ssh_user` / `ssh_port` /
+  `ssh_key`; env `TERMINAL_SSH_*`) — a *locally* installed Hermes can execute all
+  tools on a remote box while the agent loop and inference stay local. Useful to know,
+  but the opposite of the [`gcp/vpc-install/`](gcp/vpc-install/) design, which runs the
+  agent **on the VM** (`backend: local`) with the desktop app as a pure client so
+  inference bills through the VM's service account. `browser.cdp_url` /
+  `BROWSER_CDP_URL` is the matching lever for pointing at a remote Chrome.
+- **Playwright may reject a brand-new Ubuntu.** On 26.04 `npx playwright install` can
+  fail with "Unsupported host platform"; `PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=ubuntu24.04-x64`
+  installs the 24.04 build and works. Use `--with-deps` so Playwright resolves the
+  release-correct library names itself (`libasound2` vs `libasound2t64` differ by release).
+- **`gemini` provider ≠ `vertex` provider.** The `gemini` provider uses an AI-Studio
+  `GOOGLE_API_KEY`; our chat uses the `vertex` provider (config.yaml + ADC, no key).
+  Honcho separately needs a real AI-Studio Gemini key (no Vertex support). Mixing these
+  up causes HTTP 400 "no access to model".
+
+## Ops quick reference
+
+```bash
+# Start / stop the VM (stop drops cost to ~$5/mo)
+gcloud compute instances start hermes-agent --zone=europe-west1-b
+gcloud compute instances stop  hermes-agent --zone=europe-west1-b
+
+# SSH tunnel for desktop/browser UI (rerun after any VM stop or Mac reboot)
+gcloud compute ssh hermes-agent --zone=europe-west1-b -- -L 9119:localhost:9119 -N -f
+
+# Reset dashboard login (on the VM)
+HERMES_DASHBOARD_PASSWORD='new-pw' dashboard-setup.sh kennet 9119
+
+# Health check (on the VM)
+bash ~/hermes-install/03-verify.sh
+```
+
+## Cost (moderate daily team use)
+
+~$55/mo VM+disk + ~$75–180/mo Vertex chat tokens + ~$5–20/mo Vertex AI Search +
+~$3–10/mo Honcho (AI Studio) ≈ **$140–265/month**. Chat tokens dominate; keep Flash
+as default and stop the VM when idle.
+
+> **Production / support-bot deployment runs 24/7 — do NOT stop the VM.** The "stop when idle"
+> lever above is for a pilot only. For the always-on [support bot](gcp/SUPPORT-BOT-SETUP.md)
+> the VM stays up (full ~$55/mo, no idle savings), user services survive logout via linger
+> (already set by `02-vm-install.sh`), the gateway service is `enable`d for boot, and Honcho
+> containers use `restart: unless-stopped`. Socket Mode means bot uptime is independent of the
+> Mac-side dashboard tunnel. See SUPPORT-BOT-SETUP.md §"24/7 operation".
+
+## Conventions for agents working in this repo
+
+- Tooling: **UV** for Python/CLI, **Bun** for TS/web (per user global prefs).
+- Secrets/credentials are **never** committed here — passwords come from env
+  (`HERMES_DASHBOARD_PASSWORD`) or are set directly on the VM. Templates in
+  `gcp/configs/*.template` use `__PLACEHOLDER__` tokens filled at install time.
+- Keep this file and `gcp/` in sync when the install changes — this repo's whole
+  point is faithful replication.

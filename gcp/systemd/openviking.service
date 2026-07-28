@@ -1,0 +1,20 @@
+[Unit]
+Description=OpenViking memory server (Hermes memory provider)
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=__HOME__/.openviking-venv/bin/openviking-server
+Restart=always
+RestartSec=5
+Environment=OPENVIKING_CONFIG_FILE=__HOME__/.openviking/ov.conf
+# Route the google-genai embedding client through Vertex AI (ADC via the VM's
+# service account) instead of the AI Studio API — keeps billing in the GCP project.
+Environment=GOOGLE_GENAI_USE_VERTEXAI=true
+Environment=GOOGLE_CLOUD_PROJECT=test-disco-cm
+# EU-residency: if OpenViking is ever enabled, set this to a European region that
+# serves the embedding model (do NOT leave 'global'). Verify with an API probe first.
+Environment=GOOGLE_CLOUD_LOCATION=europe-west2
+
+[Install]
+WantedBy=default.target

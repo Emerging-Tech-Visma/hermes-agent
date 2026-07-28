@@ -1,0 +1,59 @@
+# Hermes config for the GCP VM — rendered to ~/.hermes/config.yaml by
+# 02-vm-install.sh (which substitutes the __PLACEHOLDER__ tokens).
+#
+# Design: EVERYTHING runs on this VM. terminal.backend stays `local`, so when
+# you ask the agent from the desktop app to "create a folder", the shell tool
+# runs here and the folder lands on the VM. The desktop app is only a client.
+
+# ---------------------------------------------------------------------------
+# Model — Vertex AI via the VM's attached service account (ADC, no key files)
+# ---------------------------------------------------------------------------
+provider: vertex
+model: __HERMES_MODEL__
+
+providers:
+  vertex:
+    project_id: __PROJECT_ID__
+    region: __VERTEX_REGION__
+    # GOTCHA: Vertex has no /models discovery route and uses ADC (no stored
+    # credential), so Hermes' `/model` picker and the desktop dropdown list
+    # ONLY the currently-configured model unless you declare a catalog here.
+    #
+    # This list is generated from HERMES_MODELS in 00-vars.sh. Every entry must be
+    # probed 200 at the configured region first — a model that 404s still appears
+    # as a selectable row and fails only when you pick it.
+    models:
+      __VERTEX_MODEL_LIST__
+
+# ---------------------------------------------------------------------------
+# Terminal — local, i.e. on this VM
+# ---------------------------------------------------------------------------
+terminal:
+  backend: local
+  timeout: 180
+
+# ---------------------------------------------------------------------------
+# Web search — self-hosted SearXNG on this VM (localhost only)
+# ---------------------------------------------------------------------------
+# The instance URL comes from SEARXNG_URL in ~/.hermes/.env.
+web:
+  backend: __WEB_BACKEND__
+  search_backend: __WEB_BACKEND__
+  extract_backend: __WEB_BACKEND__
+
+# ---------------------------------------------------------------------------
+# Browser — local Chrome/Chromium on this VM, headless
+# ---------------------------------------------------------------------------
+browser:
+  engine: chrome          # auto | chrome | lightpanda
+  headed: false           # no display on a server; keep headless
+  inactivity_timeout: 120
+
+# ---------------------------------------------------------------------------
+# Memory — self-hosted Honcho (Docker) on this VM; base URL from .env
+# ---------------------------------------------------------------------------
+memory:
+  provider: __MEMORY_PROVIDER__
+  memory_enabled: true
+  user_profile_enabled: true
+  nudge_interval: 10

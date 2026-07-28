@@ -1,0 +1,9 @@
+[Unit]
+Description=Refresh Vertex token every 45 minutes (tokens expire after ~1h)
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=45min
+
+[Install]
+WantedBy=timers.target
