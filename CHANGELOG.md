@@ -20,8 +20,6 @@ library, so the version tracks the **installable configuration** it describes.
 
 ## [Unreleased]
 
-- **Add Honcho's LLM keys** to `~/honcho/.env` on the VM (AI Studio Gemini + OpenAI
-  embeddings) and bring the container up — the only outstanding install step.
 - **Exercise a full agent turn** through the desktop app and confirm files/folders
   land on the VM (`INSTALL.md` §8). The CLI TUI cannot be driven by piped stdin, so
   this was not verifiable from a script.
@@ -29,6 +27,90 @@ library, so the version tracks the **installable configuration** it describes.
   `HERMES_DASHBOARD_BASIC_AUTH_PASSWORD_HASH`.
 - Optional: `serpapi-mcp` as an *additional* MCP tool for true Google SERP data,
   alongside SearXNG rather than replacing it.
+
+---
+
+## [0.12.0] — 2026-07-29
+
+**Honcho now runs entirely on Vertex AI — zero external API keys.** Honcho's reasoning
+bills to the same GCP project and service account as Hermes chat.
+
+### Added
+
+- **`scripts/vertex-openai-proxy.py`** — an OpenAI-compatible shim in front of Vertex,
+  run as `vertex-openai-proxy.service` on `127.0.0.1:8900`. Python **stdlib only**, no
+  dependencies. It exists because two things block pointing Honcho at Vertex directly:
+  1. **Vertex OAuth tokens expire hourly**, but Honcho wants a *static* `api_key`. The
+     shim mints a fresh token from the metadata server per request (cached, refreshed
+     5 min before expiry) — no 45-minute container-restart loop.
+  2. **Vertex's OpenAI-compat `/embeddings` endpoint is broken.** Verified 2026-07-28:
+     HTTP 500 "Internal error" for *every* model name (`gemini-embedding-001`,
+     `text-embedding-004/005`, with and without the `google/` prefix) in **both**
+     `global` and `europe-west2`. The native `:predict` API works fine on the same
+     models. The shim translates `/v1/embeddings` → `:predict` and converts back.
+  Chat is a transparent pass-through including **SSE streaming**; only auth is added.
+- **`configs/honcho-vertex.env`** — points all ten Honcho module transports at the shim.
+- **`configs/honcho-gemini-only.env`** — single-AI-Studio-key alternative.
+- **`MEMORY_LLM_BACKEND`** in `00-vars.sh`: `vertex` (default) | `gemini` | `manual`.
+- **`OPS-NOTES.md` §8 — stop / start / reboot semantics**, with a per-component table of
+  what returns automatically, and the fact that **Cloud NAT keeps billing while the VM is
+  stopped**.
+- **`OPS-NOTES.md` §9 — scenario cookbook**: shell in, update Hermes, restart the
+  gateway, kill a wedged gateway, restart everything, re-apply managed config, inspect
+  the shim, free disk, rotate the password, audit who can reach the box.
+
+### Changed
+
+- `HONCHO_MODEL` defaults to `google/gemini-2.5-flash`, **not** 3.6-flash: 3.6-flash
+  spends output budget on reasoning tokens (observed `max_tokens=20` consumed entirely
+  by 16 reasoning tokens, empty content), which is wasteful for short structured
+  extractions.
+- Embeddings pinned to `europe-west2` via the native API — **EU-resident even though
+  chat uses `global`**. Dimensionality forced to **1536** to match Honcho's pgvector
+  column; `gemini-embedding-001` returns 3072 by default, which would fail every insert.
+
+### Fixed
+
+- **A stray manually-started proxy masked a failing systemd unit.** During testing a
+  `nohup` process held port 8900, so the real unit was in a restart loop
+  (`Result=exit-code`) while everything *appeared* healthy — the install would have
+  survived a reboot by luck, not design. Killed the stray; the unit now owns the port.
+  *Lesson: verify which PID owns the port, not just that the port answers.*
+
+### Verified live (2026-07-29)
+
+End-to-end memory extraction through Vertex, with **no external keys configured**:
+
+| Step | Result |
+|---|---|
+| Shim health / chat / **streaming** | 200 / 200 / real SSE deltas |
+| Shim embeddings | 200, **1536 dims** (batch of 2 → 2 × 1536) |
+| Reachable from Honcho container | ✅ via compose gateway `172.19.0.1` |
+| Message ingest (`POST /v3/.../messages`) | **201** |
+| Deriver extraction errors | **0** |
+| Dialectic recall | *"Kennet works at Visma in Denmark and strongly prefers Bun over npm for TypeScript projects."* — exactly the inserted fact |
+| **Falsification: shim stopped** | dialectic → **HTTP 500** |
+| **Falsification: shim started** | dialectic → **HTTP 200**, fresh answer |
+| `03-verify.sh` | **9/9** |
+
+The falsification pair is the real proof: Honcho's LLM calls demonstrably depend on the
+shim, so they are demonstrably going to Vertex.
+
+Reboot-survival audited: Honcho's shipped compose already has `restart: unless-stopped`
+on all four services, Docker is `enabled` at boot, and all four user units are `enabled`
+under linger. Internal IP `10.10.0.2` persists across stop/start. **Only the client-side
+IAP tunnel needs re-opening.**
+
+### Known limits
+
+- Vertex may not support OpenAI `json_schema` structured output over the compat
+  endpoint; if Honcho's extraction ever returns malformed JSON, set
+  `DERIVER_MODEL_CONFIG__STRUCTURED_OUTPUT_MODE=json_object`.
+- The shim has **no authentication** — it hands Vertex access to anything that can reach
+  it. Safe only because this VM has no external IP and the firewall admits only Google's
+  IAP range. Never expose port 8900.
+- Reading the shim's access log needs `systemd-journal` group membership
+  (`sudo usermod -aG systemd-journal $USER`, then re-login).
 
 ---
 

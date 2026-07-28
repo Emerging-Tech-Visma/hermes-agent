@@ -25,7 +25,7 @@ OpenAI keys (Honcho has no Vertex support).
 
 ## Canonical facts
 
-### Current install — v0.11.1, private VPC (built 2026-07-28)
+### Current install — v0.12.0, private VPC (built 2026-07-28)
 
 The live install is the **[`gcp/vpc-install/`](gcp/vpc-install/)** package. The v1 table
 in the next subsection is **historical** — that VM had been deleted (verified 2026-07-28:

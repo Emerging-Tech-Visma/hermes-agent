@@ -231,7 +231,85 @@ if [ "${MEMORY_PROVIDER}" = "honcho" ]; then
     [ "${#v}" -ge 20 ] || return 1
     return 0
   }
-  if honcho_key_real LLM_GEMINI_API_KEY && honcho_key_real LLM_OPENAI_API_KEY; then
+  # --- Point Honcho at an LLM backend -------------------------------------
+  # Managed block, stripped and rewritten each run so re-running is idempotent.
+  apply_honcho_block() {
+    python3 - "$1" <<'PY'
+import pathlib, sys
+env = pathlib.Path.home() / "honcho" / ".env"
+block = pathlib.Path(sys.argv[1]).read_text()
+lines, out, skip = env.read_text().splitlines(keepends=True), [], False
+for l in lines:
+    if "BEGIN hermes-managed" in l:
+        skip = True
+    if not skip:
+        out.append(l)
+    if "END hermes-managed" in l:
+        skip = False
+text = "".join(out).rstrip("\n") + "\n"
+body = "\n".join(l for l in block.splitlines() if l.strip() and not l.lstrip().startswith("#"))
+env.write_text(text + "\n# ===== BEGIN hermes-managed =====\n" + body + "\n# ===== END hermes-managed =====\n")
+PY
+    chmod 600 "${HOME}/honcho/.env"
+  }
+
+  if [ "${MEMORY_LLM_BACKEND}" = "vertex" ]; then
+    echo "==> Honcho -> Vertex AI via local shim (no external API keys)"
+    install -m 0755 "${INSTALL_DIR}/scripts/vertex-openai-proxy.py" \
+      "${HOME}/.local/bin/vertex-openai-proxy.py"
+    sed -e "s|__HOME__|${HOME}|g" \
+        -e "s|__PROJECT_ID__|${PROJECT_ID}|g" \
+        -e "s|__VERTEX_REGION__|${VERTEX_REGION}|g" \
+        -e "s|__VERTEX_EMBED_LOCATION__|${VERTEX_EMBED_LOCATION}|g" \
+        -e "s|__VERTEX_EMBED_DIMENSIONS__|${VERTEX_EMBED_DIMENSIONS}|g" \
+        -e "s|__PROXY_PORT__|${VERTEX_PROXY_PORT}|g" \
+        "${INSTALL_DIR}/systemd/vertex-openai-proxy.service" \
+        > "${HOME}/.config/systemd/user/vertex-openai-proxy.service" 2>/dev/null \
+      || { mkdir -p "${HOME}/.config/systemd/user"; sed -e "s|__HOME__|${HOME}|g" \
+            -e "s|__PROJECT_ID__|${PROJECT_ID}|g" -e "s|__VERTEX_REGION__|${VERTEX_REGION}|g" \
+            -e "s|__VERTEX_EMBED_LOCATION__|${VERTEX_EMBED_LOCATION}|g" \
+            -e "s|__VERTEX_EMBED_DIMENSIONS__|${VERTEX_EMBED_DIMENSIONS}|g" \
+            -e "s|__PROXY_PORT__|${VERTEX_PROXY_PORT}|g" \
+            "${INSTALL_DIR}/systemd/vertex-openai-proxy.service" \
+            > "${HOME}/.config/systemd/user/vertex-openai-proxy.service"; }
+    systemctl --user daemon-reload
+    systemctl --user enable --now vertex-openai-proxy.service
+    systemctl --user restart vertex-openai-proxy.service
+    sleep 3
+    curl -sf -o /dev/null "http://127.0.0.1:${VERTEX_PROXY_PORT}/health" \
+      && echo "    shim healthy on :${VERTEX_PROXY_PORT}" \
+      || echo "    WARNING: shim not responding — journalctl --user -u vertex-openai-proxy -n 30"
+
+    # Honcho runs in Docker and cannot reach the host's localhost. Detect the
+    # compose bridge gateway; if the network doesn't exist yet, create it by
+    # bringing the stack up once first.
+    ${DOCKER} compose -f "${HOME}/honcho/docker-compose.yml" up -d --no-start >/dev/null 2>&1 || true
+    GW="$(${DOCKER} network inspect honcho_default \
+          --format '{{range .IPAM.Config}}{{.Gateway}}{{end}}' 2>/dev/null)"
+    [ -n "${GW}" ] || GW="172.17.0.1"   # default-bridge fallback
+    echo "    containers will reach the shim at ${GW}:${VERTEX_PROXY_PORT}"
+    TMP_BLOCK="$(mktemp)"
+    sed -e "s|__PROXY_URL__|http://${GW}:${VERTEX_PROXY_PORT}/v1|g" \
+        -e "s|__HONCHO_MODEL__|${HONCHO_MODEL}|g" \
+        -e "s|__HONCHO_EMBED_MODEL__|${HONCHO_EMBED_MODEL}|g" \
+        -e "s|__VERTEX_EMBED_DIMENSIONS__|${VERTEX_EMBED_DIMENSIONS}|g" \
+        "${INSTALL_DIR}/configs/honcho-vertex.env" > "${TMP_BLOCK}"
+    apply_honcho_block "${TMP_BLOCK}"
+    rm -f "${TMP_BLOCK}"
+    ( cd "${HOME}/honcho" && ${DOCKER} compose up -d )
+
+  elif [ "${MEMORY_LLM_BACKEND}" = "gemini" ]; then
+    echo "==> Honcho -> AI Studio Gemini (one key required)"
+    apply_honcho_block "${INSTALL_DIR}/configs/honcho-gemini-only.env"
+    if honcho_key_real LLM_GEMINI_API_KEY; then
+      ( cd "${HOME}/honcho" && ${DOCKER} compose up -d )
+    else
+      echo "    ACTION REQUIRED: set LLM_GEMINI_API_KEY in ~/honcho/.env"
+      echo "      (AI Studio key from https://aistudio.google.com/apikey)"
+      echo "    then: cd ~/honcho && sudo docker compose up -d"
+    fi
+
+  elif honcho_key_real LLM_GEMINI_API_KEY && honcho_key_real LLM_OPENAI_API_KEY; then
     ( cd "${HOME}/honcho" && ${DOCKER} compose up -d )
   else
     cat <<'HONCHO'

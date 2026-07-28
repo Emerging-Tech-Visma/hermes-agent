@@ -115,6 +115,42 @@ export WEB_BACKEND="searxng"          # Hermes web.backend
 export MEMORY_PROVIDER="honcho"       # honcho | builtin
 export HONCHO_PORT="8000"
 
+# Which LLM backend Honcho itself uses. Honcho has NO Vertex transport
+# (src/config.py: ModelTransport = Literal["anthropic","openai","gemini"]), so:
+#
+#   "vertex"  — RECOMMENDED. Honcho's `openai` transport is pointed at a local
+#               shim (scripts/vertex-openai-proxy.py) that forwards to Vertex and
+#               injects a fresh service-account token per request. Result: ZERO
+#               external API keys, Honcho's reasoning billed to this GCP project,
+#               same service account as Hermes chat. The shim also works around
+#               Vertex's broken OpenAI-compat /embeddings endpoint (HTTP 500 for
+#               every model, verified 2026-07-28) by translating to :predict.
+#
+#   "gemini"  — direct AI Studio. Needs ONE key (LLM_GEMINI_API_KEY) pasted into
+#               ~/honcho/.env. Simpler, but billed outside GCP.
+#
+#   "manual"  — touch nothing; you configure ~/honcho/.env yourself.
+export MEMORY_LLM_BACKEND="vertex"
+
+# Model Honcho uses for extraction / summary / dialectic / dream.
+# Default is 2.5-flash, not 3.6-flash, on purpose: 3.6-flash spends part of its
+# output budget on reasoning tokens (observed: max_tokens=20 consumed entirely by
+# 16 reasoning tokens, empty content), which is wasteful for Honcho's short
+# structured extractions. 3.6-flash does work if you want it.
+export HONCHO_MODEL="google/gemini-2.5-flash"
+export HONCHO_EMBED_MODEL="gemini-embedding-001"
+
+# Local Vertex shim. Bound to 0.0.0.0 so Honcho's containers reach it over the
+# compose bridge; safe ONLY because this VM has no external IP and the firewall
+# admits nothing but Google's IAP range. NEVER open this port.
+export VERTEX_PROXY_PORT="8900"
+# Embeddings need a REGIONAL endpoint (the native :predict route). europe-west2
+# keeps them EU-resident even while chat uses `global`.
+export VERTEX_EMBED_LOCATION="europe-west2"
+# MUST match Honcho's pgvector column width (EMBEDDING_VECTOR_DIMENSIONS).
+# gemini-embedding-001 returns 3072 unless outputDimensionality is requested.
+export VERTEX_EMBED_DIMENSIONS="1536"
+
 # ---------------------------------------------------------------------------
 # Dashboard (the "secure gateway" endpoint the desktop app + browser connect to)
 # ---------------------------------------------------------------------------

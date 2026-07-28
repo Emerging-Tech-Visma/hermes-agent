@@ -35,7 +35,9 @@ alias hermes-gw='gcloud compute start-iap-tunnel hermes-agent 9119 --local-host-
 5. [Setup the desktop app cannot do](#5-setup-the-desktop-app-cannot-do)
 6. [Backup and restore](#6-backup-and-restore)
 7. [Gateway/tunnel problems (on your PC)](#7-gatewaytunnel-problems-on-your-pc)
-8. [Symptom → cause table](#8-symptom--cause-table)
+8. [Stopping, starting and rebooting the VM](#8-stopping-starting-and-rebooting-the-vm)
+9. [Scenario cookbook](#9-scenario-cookbook)
+10. [Symptom → cause table](#10-symptom--cause-table)
 
 ---
 
@@ -621,7 +623,249 @@ retry; every script here is idempotent.
 
 ---
 
-## 8. Symptom → cause table
+## 8. Stopping, starting and rebooting the VM
+
+### What happens when you stop it
+
+Stopping the instance kills **everything** — the agent, the gateway, the dashboard,
+SearXNG, Honcho, the Vertex shim, cron jobs. Nothing is lost: the boot disk persists,
+so all config, memory, sessions and the Honcho database survive.
+
+```bash
+# on your PC
+gcloud compute instances stop hermes-agent --zone=europe-west2-b
+```
+
+| Cost while stopped | |
+|---|---|
+| VM (vCPU/RAM) | **stops billing** |
+| 100 GB boot disk | **keeps billing** (~$11/mo) |
+| Cloud NAT gateway | **keeps billing** (~$35–45/mo) — it is not tied to the VM |
+| Static internal IP `10.10.0.2` | free, and **persists** |
+
+> So stopping saves roughly the compute only. If you are pausing for weeks, delete the
+> NAT gateway too — and remember to recreate it before starting, or `apt`, Docker Hub
+> and SearXNG's upstream fetches will all fail:
+> ```bash
+> gcloud compute routers nats delete hermes-nat --router=hermes-router --region=europe-west2 --quiet
+> # to restore:
+> gcloud compute routers nats create hermes-nat --router=hermes-router --region=europe-west2 \
+>   --auto-allocate-nat-external-ips --nat-all-subnet-ip-ranges
+> ```
+
+### What happens when you start it again
+
+**Everything comes back on its own.** Verified on this install:
+
+| Component | Comes back? | Why |
+|---|---|---|
+| `hermes-dashboard.service` | ✅ | user unit, `enabled` + **linger** |
+| `hermes-gateway.service` | ✅ | user unit, `enabled` + linger |
+| `vertex-openai-proxy.service` | ✅ | user unit, `enabled` + linger |
+| `memory-backup.timer` | ✅ | timer, `enabled`, `Persistent=true` catches missed runs |
+| Honcho (4 containers) | ✅ | `restart: unless-stopped` + docker `enabled` at boot |
+| SearXNG + Valkey | ✅ | `restart: unless-stopped` |
+| Internal IP `10.10.0.2` | ✅ | stays assigned to the instance |
+| **Your IAP tunnel** | ❌ | **client-side — you must re-open it** |
+| Dashboard session | ❌ | 12 h TTL; sign in again |
+
+The only manual step is the tunnel on your PC:
+
+```bash
+gcloud compute instances start hermes-agent --zone=europe-west2-b
+# wait ~45-60s for boot + containers, then:
+gcloud compute start-iap-tunnel hermes-agent 9119 \
+  --local-host-port=localhost:9119 --zone=europe-west2-b --project=test-disco-cm
+```
+
+Install the LaunchAgent (`configs/com.hermes.gateway-tunnel.plist`) and even that
+becomes automatic.
+
+### Full start-and-verify, one command
+
+```bash
+gcloud compute instances start hermes-agent --zone=europe-west2-b && \
+sleep 60 && \
+gcloud compute ssh hermes-agent --zone=europe-west2-b --tunnel-through-iap \
+  --command='bash ~/hermes-install/03-verify.sh'
+```
+
+Expect **9/9**. If Honcho fails, its containers are usually just slower than the
+health check — wait 30s and re-run before investigating.
+
+### Rebooting (vs. stop/start)
+
+```bash
+gcloud compute ssh hermes-agent --zone=europe-west2-b --tunnel-through-iap --command='sudo reboot'
+```
+
+Same recovery story, faster. Reboot after a kernel update:
+
+```bash
+[ -f /var/run/reboot-required ] && cat /var/run/reboot-required.pkgs
+```
+
+> ⚠️ **Do not stop the VM if this is serving a team.** Cron jobs don't fire, and any
+> Slack/messaging bot goes offline. `linger` and `Restart=always` cannot help a stopped
+> instance.
+
+---
+
+## 9. Scenario cookbook
+
+Copy-paste recipes for the things you'll actually do. All `hermes-ssh` below is the
+alias from the top of this file.
+
+### "I want a shell on the box"
+
+```bash
+gcloud compute ssh hermes-agent --zone=europe-west2-b --tunnel-through-iap
+```
+
+No public IP exists, so `--tunnel-through-iap` is mandatory every time. If it exits
+**255**, that's the known transient — just retry, everything here is idempotent.
+
+### "Update Hermes itself"
+
+```bash
+gcloud compute ssh hermes-agent --zone=europe-west2-b --tunnel-through-iap --command='
+export PATH="$HOME/.local/bin:$PATH"
+cp ~/.hermes/config.yaml ~/.hermes/config.yaml.bak-$(date +%F)
+systemctl --user stop hermes-gateway.service hermes-dashboard.service
+hermes update && hermes version
+systemctl --user start hermes-dashboard.service hermes-gateway.service
+hermes doctor'
+```
+
+Then re-check the three things an upgrade can silently reset (§3).
+
+### "Restart the gateway"
+
+```bash
+gcloud compute ssh hermes-agent --zone=europe-west2-b --tunnel-through-iap \
+  --command='systemctl --user restart hermes-gateway.service && systemctl --user is-active hermes-gateway.service'
+```
+
+### "The gateway is wedged — kill it and start clean"
+
+`Restart=always` cannot see a hung-but-alive process, so this is the escalation:
+
+```bash
+gcloud compute ssh hermes-agent --zone=europe-west2-b --tunnel-through-iap --command='
+systemctl --user stop hermes-gateway.service
+pkill -u "$USER" -f "gateway run" || true
+sleep 2
+rm -f ~/.hermes/gateway.lock ~/.hermes/gateway.pid
+systemctl --user start hermes-gateway.service
+sleep 5
+systemctl --user is-active hermes-gateway.service'
+```
+
+If it comes back `inactive (dead)` instead, that's **exit 78 = config error** — read the
+journal, don't keep restarting (§2a-bis).
+
+### "Restart everything"
+
+```bash
+gcloud compute ssh hermes-agent --zone=europe-west2-b --tunnel-through-iap --command='
+systemctl --user restart vertex-openai-proxy.service hermes-dashboard.service hermes-gateway.service
+sudo docker compose -f ~/searxng/docker-compose.yml restart
+sudo docker compose -f ~/honcho/docker-compose.yml restart
+sleep 20
+bash ~/hermes-install/03-verify.sh'
+```
+
+Restart the **shim before Honcho** — Honcho's first call fails if the shim is down.
+
+### "Re-apply the whole managed config from the repo"
+
+The installer is idempotent; this is the blunt fix for config drift:
+
+```bash
+# refresh the repo copy on the VM first (from your PC)
+gcloud compute ssh hermes-agent --zone=europe-west2-b --tunnel-through-iap --command='rm -rf ~/hermes-install-new'
+gcloud compute scp --zone=europe-west2-b --tunnel-through-iap --recurse \
+  gcp/vpc-install hermes-agent:~/hermes-install-new
+gcloud compute ssh hermes-agent --zone=europe-west2-b --tunnel-through-iap \
+  --command='rm -rf ~/hermes-install && mv ~/hermes-install-new ~/hermes-install'
+```
+
+> Always delete the target first — `scp --recurse` of a directory *into* an existing
+> one nests it (`hermes-install/vpc-install/...`) and every path then breaks.
+
+```bash
+gcloud compute ssh hermes-agent --zone=europe-west2-b --tunnel-through-iap --command='
+export HERMES_DASHBOARD_PASSWORD="$(grep ^HERMES_DASHBOARD_BASIC_AUTH_PASSWORD= ~/.hermes/.env | cut -d= -f2-)"
+bash ~/hermes-install/02-vm-install.sh 2>&1 | tail -20'
+```
+
+Re-running no longer logs you out — the session-signing secret is preserved (0.11.1).
+
+### "Check the Vertex shim behind Honcho"
+
+```bash
+gcloud compute ssh hermes-agent --zone=europe-west2-b --tunnel-through-iap --command='
+systemctl --user is-active vertex-openai-proxy.service
+curl -s http://127.0.0.1:8900/health; echo
+sudo journalctl _SYSTEMD_USER_UNIT=vertex-openai-proxy --no-pager -n 20'
+```
+
+Definitive test of whether Honcho really depends on it — stop it and query:
+
+```bash
+# with the shim down, a dialectic query returns HTTP 500; with it up, 200
+systemctl --user stop vertex-openai-proxy.service
+curl -s -o /dev/null -w '%{http_code}\n' -X POST \
+  http://localhost:8000/v3/workspaces/WS/peers/PEER/chat \
+  -H 'Content-Type: application/json' -d '{"query":"hi"}'
+systemctl --user start vertex-openai-proxy.service
+```
+
+> Reading the shim's own access log needs journal access. If you see *"No journal files
+> were opened due to insufficient permissions"*, you're not in `systemd-journal` yet:
+> `sudo usermod -aG systemd-journal $USER` then log out and back in. Use
+> `sudo journalctl _SYSTEMD_USER_UNIT=vertex-openai-proxy` meanwhile.
+
+### "Free up disk"
+
+```bash
+gcloud compute ssh hermes-agent --zone=europe-west2-b --tunnel-through-iap --command='
+df -h / | tail -1
+sudo docker image prune -f
+du -sh ~/.hermes/logs ~/.hermes/sessions ~/.cache/ms-playwright 2>/dev/null
+sudo journalctl --vacuum-time=7d'
+```
+
+### "Rotate the dashboard password"
+
+```bash
+gcloud compute ssh hermes-agent --zone=europe-west2-b --tunnel-through-iap --command='
+export PATH="$HOME/.local/bin:$PATH"
+HERMES_DASHBOARD_PASSWORD="a-new-strong-password" dashboard-setup.sh kennet 9119'
+```
+
+Add `ROTATE_DASHBOARD_SECRET=1` to also invalidate every existing session (do that if a
+password may have leaked).
+
+### "Who can reach this box?"
+
+```bash
+gcloud projects get-iam-policy test-disco-cm \
+  --flatten="bindings[].members" \
+  --filter="bindings.role:roles/iap.tunnelResourceAccessor" \
+  --format="value(bindings.members)"
+```
+
+Revoke instantly — no key rotation, no `authorized_keys` edits:
+
+```bash
+gcloud projects remove-iam-policy-binding test-disco-cm \
+  --member="user:person@example.com" --role="roles/iap.tunnelResourceAccessor"
+```
+
+---
+
+## 10. Symptom → cause table
 
 | Symptom | Cause / fix |
 |---|---|

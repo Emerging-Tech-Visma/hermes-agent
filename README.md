@@ -5,7 +5,7 @@
 **A reproducible runbook for running a [Hermes Agent](https://hermes-agent.nousresearch.com)
 on Google Cloud — privately, EU-resident data, billed through your own project.**
 
-[![version](https://img.shields.io/badge/version-0.11.1-blue)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.12.0-blue)](CHANGELOG.md)
 [![Hermes](https://img.shields.io/badge/Hermes-v0.19.0-8A2BE2)](https://hermes-agent.nousresearch.com)
 [![data](https://img.shields.io/badge/data-europe--west2-green)](#eu-data-residency)
 [![inference](https://img.shields.io/badge/inference-vertex%20global-yellow)](#eu-data-residency)
@@ -36,7 +36,7 @@ YOUR PC                                GOOGLE CLOUD
 │                      │  identity-    │  │ Hermes gateway    (cron / routines)   │ │
 │  (client only —      │  gated,       │  │ Chrome + Playwright Chromium          │ │
 │   zero compute)      │  encrypted    │  │ SearXNG           :8080  localhost    │ │
-└──────────────────────┘               │  │ Honcho memory     :8000  localhost    │ │
+└──────────────────────┘               │  │ Honcho memory :8000 + Vertex shim :8900│ │
                                        │  └──────────────────────────────────────┘  │
                                        │  Vertex AI · gemini-3.6-flash · global ⚠️  │
                                        └────────────────────────────────────────────┘
@@ -98,7 +98,7 @@ Full walkthrough: **[gcp/vpc-install/INSTALL.md](gcp/vpc-install/INSTALL.md)**
 | Model | Vertex AI `gemini-3.6-flash` (+ `3.5-flash`, `3.5-flash-lite`) @ `global` | the three latest flash models; ⚠️ `global` is not region-pinned |
 | Search | Self-hosted **SearXNG** | native Hermes backend, no API key, no hosted-SaaS query log |
 | Browser | Chrome + Playwright Chromium, headless | real browser automation on the VM |
-| Memory | Self-hosted **Honcho** (Postgres/pgvector) | per-user memory modelling, stays on your box |
+| Memory | Self-hosted **Honcho** (Postgres/pgvector) **on Vertex** | per-user memory modelling; **zero external API keys** via a local OpenAI-compat shim |
 | Client | Hermes Desktop app or browser, over IAP | thin client; all compute remote |
 | Auth | One attached service account | **no key files anywhere** |
 
@@ -165,7 +165,7 @@ European region — and **re-probe** rather than trusting the table above.
 | [gcp/vpc-install/INSTALL.md](gcp/vpc-install/INSTALL.md) | Full guide — architecture, every command, security model, cost, design rationale. |
 | [gcp/vpc-install/OPS-NOTES.md](gcp/vpc-install/OPS-NOTES.md) | **Day-2 ops over SSH** — idle/wedged gateways, backend upgrades, service updates, symptom→cause table. |
 | [AGENTS.md](AGENTS.md) | Master runbook: architecture, canonical facts, and **lessons learned** (read before debugging anything). |
-| [CHANGELOG.md](CHANGELOG.md) | Version history. Currently **0.11.1**. |
+| [CHANGELOG.md](CHANGELOG.md) | Version history. Currently **0.12.0**. |
 
 **Variants and deeper topics** (from the earlier public-IP install — still the best
 reference for these subjects)

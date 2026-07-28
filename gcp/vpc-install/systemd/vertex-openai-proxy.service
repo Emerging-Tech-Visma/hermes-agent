@@ -1,0 +1,28 @@
+[Unit]
+# OpenAI-compatible shim in front of Vertex AI, so Honcho's `openai` transport
+# can bill to the GCP project. Honcho has no Vertex transport of its own.
+# Solves two things a plain base_url cannot: hourly OAuth token expiry (minted
+# per request from the metadata server, cached) and Vertex's broken
+# OpenAI-compat /embeddings endpoint (translated to the native :predict API).
+Description=Vertex AI OpenAI-compatible proxy (for Honcho)
+After=network-online.target
+Wants=network-online.target
+# Honcho talks to this; start it first so the deriver's first call doesn't fail.
+Before=docker.service
+
+[Service]
+Type=simple
+Environment=VERTEX_PROJECT=__PROJECT_ID__
+Environment=VERTEX_LOCATION=__VERTEX_REGION__
+Environment=VERTEX_EMBED_LOCATION=__VERTEX_EMBED_LOCATION__
+Environment=VERTEX_EMBED_DIMENSIONS=__VERTEX_EMBED_DIMENSIONS__
+Environment=PROXY_PORT=__PROXY_PORT__
+Environment=PROXY_BIND=0.0.0.0
+ExecStart=/usr/bin/python3 __HOME__/.local/bin/vertex-openai-proxy.py
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target

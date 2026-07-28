@@ -15,6 +15,7 @@ Desktop app / browser  ──IAP tunnel──►  GCE VM (no public IP, private 
                                          ├─ Chrome + Playwright Chromium
                                          ├─ SearXNG      :8080  (localhost only)
                                          ├─ Honcho memory :8000  (localhost only)
+                                         ├─ Vertex shim   :8900  (localhost only)
                                          └─ Vertex AI  gemini-3.6-flash @ global ⚠️
 ```
 
@@ -26,7 +27,7 @@ Desktop app / browser  ──IAP tunnel──►  GCE VM (no public IP, private 
 | Data residency | infra + storage `europe-west2`; ⚠️ inference on `global` (not region-pinned) |
 | Model | Vertex AI `gemini-3.6-flash` (default) + `gemini-3.5-flash` + `gemini-3.5-flash-lite` |
 | Search | self-hosted SearXNG (no API key, nothing leaves the region but the query itself) |
-| Memory | self-hosted Honcho (Postgres/pgvector) |
+| Memory | self-hosted Honcho (Postgres/pgvector), **backed by Vertex — no external API keys** |
 | Browser | Chrome + Playwright Chromium, headless |
 | Auth | one attached service account — **no key files anywhere** |
 | Cost | ~$235–365/month at moderate daily team use |
@@ -40,9 +41,10 @@ Verified against **Hermes Agent v0.19.0**, GCP as of **2026-07-28**.
 > returning results, dashboard auth gate returning 401 unauthenticated and
 > `{"ok":true}` on login, gateway active, linger on.
 >
-> **The one open item is Honcho** — it needs its own AI Studio Gemini + OpenAI keys
-> (no Vertex support), so it is not running and `03-verify.sh` check 7 fails by
-> design until you add them. See [INSTALL.md §6](INSTALL.md).
+> **Honcho now runs on Vertex with zero external API keys** (v0.12.0) via a local
+> OpenAI-compat shim. Verified end-to-end: a fact pushed into Honcho was extracted and
+> correctly recalled, and stopping the shim makes the dialectic fail with HTTP 500 —
+> proving the Vertex dependency. `03-verify.sh` is **9/9**.
 >
 > A full agent *turn* has not been scripted (the CLI TUI cannot be driven by piped
 > stdin) — do that from the desktop app using the proof step in
@@ -72,10 +74,11 @@ bash ~/hermes-install/03-verify.sh
 
 Two manual steps remain, both explained in [INSTALL.md](INSTALL.md):
 
-- **Honcho LLM keys** — Honcho has no Vertex support, so it needs its own AI Studio
-  Gemini key + OpenAI embeddings key in `~/honcho/.env`. This is the only component
-  not billed through your GCP project.
 - **Connect the desktop app** — open the gateway tunnel, then sign in.
+
+Honcho needs no keys: `MEMORY_LLM_BACKEND=vertex` (the default) routes it through the
+local Vertex shim, billed to this GCP project. Set `MEMORY_LLM_BACKEND=gemini` if you
+would rather use a single AI Studio key.
 
 ### Then connect from your PC
 
@@ -116,17 +119,21 @@ configs/
   hermes.env                  → ~/.hermes/.env          (non-secret pointers)
   searxng-docker-compose.yml  → ~/searxng/docker-compose.yml
   searxng-settings.yml        → ~/searxng/settings.yml  (JSON API + limiter off)
+  honcho-vertex.env           → ~/honcho/.env  (Honcho via Vertex, no external keys)
+  honcho-gemini-only.env      → ~/honcho/.env  (single AI Studio key alternative)
   com.hermes.gateway-tunnel.plist   macOS LaunchAgent — keeps the gateway tunnel alive
 
 scripts/
   dashboard-setup.sh          idempotent dashboard basic-auth (run on the VM)
   memory-backup.sh            ~/.hermes → GCS rsync (hourly timer)
+  vertex-openai-proxy.py      OpenAI-compat shim in front of Vertex (for Honcho)
   gateway-tunnel.sh           open the secure gateway (run on your PC)
 
 systemd/ (user units, kept alive by linger)
   hermes-dashboard.service    dashboard on :9119 — the gateway endpoint
   hermes-gateway.service      cron / routines / messaging
   memory-backup.service/.timer
+  vertex-openai-proxy.service Vertex shim on :8900
 ```
 
 ---
