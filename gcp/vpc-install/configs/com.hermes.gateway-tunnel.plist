@@ -16,7 +16,7 @@
   Manage:
     launchctl kickstart -k gui/$(id -u)/com.hermes.gateway-tunnel   # force reconnect
     launchctl bootout   gui/$(id -u)/com.hermes.gateway-tunnel      # stop + disable
-    tail -f ~/Library/Logs/hermes-gateway-tunnel.log
+    tail -f /tmp/hermes-gateway-tunnel.log
 -->
 <plist version="1.0">
 <dict>
@@ -47,8 +47,10 @@
 
   <key>EnvironmentVariables</key>
   <dict>
-    <!-- EDIT: replace <you> with your macOS username. gcloud needs a sane PATH
-         and a HOME to find its ADC credentials. -->
+    <!-- EDIT: replace <you> with your macOS username (`echo $HOME`). launchd starts
+         with almost no environment: gcloud needs a sane PATH, and HOME to find the ADC
+         credentials from `gcloud auth login`. Leaving the literal <you> here makes the
+         tunnel fail with a credentials error that looks like an IAM problem. -->
     <key>PATH</key>
     <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     <key>HOME</key>
