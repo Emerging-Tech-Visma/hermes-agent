@@ -391,8 +391,9 @@ docs, keyed to our setup): [`gcp/REFERENCE.md`](gcp/REFERENCE.md).
   release-correct library names itself (`libasound2` vs `libasound2t64` differ by release).
 - **`gemini` provider ≠ `vertex` provider.** The `gemini` provider uses an AI-Studio
   `GOOGLE_API_KEY`; our chat uses the `vertex` provider (config.yaml + ADC, no key).
-  Honcho separately needs a real AI-Studio Gemini key (no Vertex support). Mixing these
-  up causes HTTP 400 "no access to model".
+  Mixing them up causes HTTP 400 "no access to model". Honcho has no Vertex transport of
+  its own, but since v0.12.0 `MEMORY_LLM_BACKEND=vertex` routes it through the local shim,
+  so it needs **no** AI-Studio key either — this install has zero external API keys.
 
 ## Ops quick reference
 
