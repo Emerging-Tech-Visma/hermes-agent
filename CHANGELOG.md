@@ -29,6 +29,65 @@ library, so the version tracks the **installable configuration** it describes.
 
 ---
 
+## [0.14.0] — 2026-08-18
+
+**The secure gateway is now permanent by default, and the installer no longer lets you
+finish without dashboard credentials.** Both came out of actually connecting a desktop
+client to the v0.13.0 install.
+
+### Added
+
+- **`scripts/install-gateway-launchagent.sh`** — one command to make the IAP tunnel
+  survive sleep, reboot and network changes. It renders the plist from `00-vars.sh` and
+  `which gcloud`, boots out stale agents, `plutil -lint`s the result, and **polls until the
+  gateway actually answers** before claiming success. `--uninstall` removes it. Verified
+  2026-08-18: killing the tunnel process, it was serving again in **~8s**.
+- **`configs/com.hermes.gateway-tunnel.plist` is now a template** with placeholders instead
+  of values to hand-edit. Hand-editing had two reliable failure modes: a bare `gcloud`
+  (launchd reads no shell profile) and a literal `<you>` left in `HOME`, which fails with a
+  credentials error that looks like an IAM problem.
+- **Gateway troubleshooting runbook** (`OPS-NOTES.md`) for *"Remote gateway sign-in
+  required"*, which is almost always a dead tunnel rather than bad credentials.
+
+### Changed
+
+- **The LaunchAgent is the documented default** in `INSTALL.md` §8 and the README quick
+  start (now four commands, not three); the manual `start-iap-tunnel` is demoted to a
+  one-off check. Rationale stated in the docs: a hand-started tunnel belongs to the shell
+  that launched it and dies with it — the app then reports a sign-in problem that is really
+  a transport problem.
+- **`02-vm-install.sh` generates a dashboard password when `HERMES_DASHBOARD_PASSWORD` is
+  unset**, into `~/.hermes-dashboard-password` (mode 600), and prints the path — never the
+  value. Previously, forgetting the export produced an install that finished "successfully"
+  with no way to sign in, and you only discovered it later at the desktop app. **Re-runs
+  reuse an existing file**, so a routine re-run cannot silently rotate the password and lock
+  out connected clients.
+  - The generated charset is deliberately **alphanumeric**, not `openssl rand -base64`:
+    base64 emits `+`, `/` and `=`, and `+` is decoded as a **space** by form/urlencoded
+    parsers, so a base64 password can work in one client and fail in another. 32
+    alphanumeric characters ≈ 190 bits, so nothing is given up.
+- **Docs now state that an unauthenticated `GET /` returns HTTP 302 → `/login`** and that
+  this is the auth gate working. It had been described as `401` in one place, which sends
+  people chasing a non-existent fault.
+
+### Fixed
+
+- **Stale `com.hermes.tunnel` LaunchAgent from the pre-VPC install** — an SSH `-L` tunnel to
+  a VM in `europe-west1-b` that no longer exists. Found still loaded and failing (exit 1) on
+  the operator's Mac, competing for port 9119 with the real gateway. The installer script
+  now boots it out and archives its plist to `.superseded`.
+- **Bootout needed verification and retry.** A single `launchctl bootout` reported success
+  while the job was still listed with a fresh PID moments later, because KeepAlive had
+  already relaunched it. The script now re-checks and retries up to 5 times, and says what
+  to do by hand if the job still will not unload.
+- **The new install script hit the same errexit trap as v0.13.0's #4** — worth recording,
+  because it is clearly an easy mistake to repeat. `CODE="$(curl …)"` under `set -e`: curl
+  exits **7** on every probe before the tunnel is listening, so the first failed attempt
+  killed the script and the retry loop never ran. It exited 7 silently while the agent came
+  up fine a second later. Fixed with `|| true`; the comment now marks it load-bearing.
+
+---
+
 ## [0.13.0] — 2026-08-18
 
 **`gemini-3.7-flash` is the default chat model.** The install was also **torn down and

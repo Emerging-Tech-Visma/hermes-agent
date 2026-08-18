@@ -305,7 +305,29 @@ you are not using (Discord, Spotify, xAI, OpenRouter, …).
 
 ## 8. Step 5 — connect the desktop app (on your PC)
 
-**Open the secure gateway.** This is the only route to the VM:
+**Open the secure gateway — install the LaunchAgent (this is the default).** One command,
+and the tunnel then survives sleep, reboot and network changes:
+
+```bash
+bash gcp/vpc-install/scripts/install-gateway-launchagent.sh
+```
+
+It fills the plist placeholders from `00-vars.sh` and `which gcloud`, boots out any stale
+agent, loads the job, and waits until the gateway actually answers before reporting
+success. Verified 2026-08-18: killing the tunnel process had it back up in **~8s**.
+
+> **Why the default is the agent, not a manual tunnel.** A hand-started
+> `start-iap-tunnel` belongs to the shell that launched it and dies with that shell —
+> closing the terminal, sleeping the Mac, or ending the session that started it all take
+> the gateway down, and the desktop app then reports *"Remote gateway sign-in required"*
+> as if something were wrong with your credentials.
+
+Manual alternatives, for a one-off check:
+
+```bash
+bash gcp/vpc-install/scripts/gateway-tunnel.sh          # foreground wrapper, Ctrl-C to stop
+bash gcp/vpc-install/scripts/gateway-tunnel.sh --status # is it up?
+```
 
 ```bash
 gcloud compute start-iap-tunnel hermes-agent 9119 \
@@ -313,13 +335,35 @@ gcloud compute start-iap-tunnel hermes-agent 9119 \
   --zone=europe-west2-b --project=test-disco-cm
 ```
 
-Or use the wrapper: `bash gcp/vpc-install/scripts/gateway-tunnel.sh`
-
 **Connect the app.** Desktop app → **Settings → Gateway → Remote gateway**:
 
 - Remote URL: `http://localhost:9119`
-- **Sign in** with your dashboard username and password
+- **Sign in** — username is `DASHBOARD_USERNAME` from `00-vars.sh` (`kennet`), and if the
+  installer generated the password it is on the **VM** at `~/.hermes-dashboard-password`
+  (mode 600, never printed to the console):
+  ```bash
+  gcloud compute ssh hermes-agent --zone=europe-west2-b --tunnel-through-iap \
+    --command='cat ~/.hermes-dashboard-password'
+  ```
 - Reconnect
+
+> An unauthenticated `GET /` returns **HTTP 302 → `/login`**. That is the auth gate
+> working, not a failure — don't chase it.
+
+**If the gateway will not come up**, check for a port fight before anything else — launchd
+does not surface a failed bind, it just respawns while the log fills with *"Address already
+in use"*:
+
+```bash
+lsof -nP -iTCP:9119 -sTCP:LISTEN     # who holds the port
+launchctl list | grep -i hermes      # stale agents (status ≠ 0 means it is failing)
+tail -f /tmp/hermes-gateway-tunnel.log
+```
+
+The pre-VPC install shipped a **`com.hermes.tunnel`** agent — an SSH `-L` tunnel to a VM in
+`europe-west1-b` that no longer exists. It fails forever and competes for port 9119. The
+installer script boots it out and archives its plist; it was found still loaded and
+failing on 2026-08-18.
 
 There is **no session token to copy**. Older notes describing a token paste are out
 of date — in v0.19.0 the app signs in with username/password and reuses the session
@@ -328,19 +372,25 @@ basic-auth, **not** OAuth.
 
 Or just open **<http://localhost:9119>** in a browser — same backend, same login.
 
-### Make the gateway survive sleep and reboot
-
-The manual tunnel dies when your machine sleeps, so the app shows *"Remote gateway
-sign-in required"* every morning. On macOS, install the LaunchAgent:
+### Managing the gateway agent
 
 ```bash
-# edit the gcloud path and your /Users path in the plist first
-cp gcp/vpc-install/configs/com.hermes.gateway-tunnel.plist ~/Library/LaunchAgents/
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.hermes.gateway-tunnel.plist
-launchctl kickstart -k gui/$(id -u)/com.hermes.gateway-tunnel
+launchctl kickstart -k gui/$(id -u)/com.hermes.gateway-tunnel   # force reconnect
+bash gcp/vpc-install/scripts/install-gateway-launchagent.sh     # re-apply (idempotent)
+bash gcp/vpc-install/scripts/install-gateway-launchagent.sh --uninstall
+tail -f /tmp/hermes-gateway-tunnel.log
 ```
 
-Reconnect after wake takes ~20–40s (launchd throttle + gcloud cold start).
+Reconnect after wake takes ~20–40s (launchd `ThrottleInterval` + gcloud cold start), so
+give the app a moment before assuming it is broken. Re-running the installer is also how
+you apply a changed VM, zone or port — it re-renders the plist from `00-vars.sh`.
+
+> `configs/com.hermes.gateway-tunnel.plist` is a **template** with placeholders; it is not
+> a valid plist on its own. Do not copy it into `~/Library/LaunchAgents/` by hand — that
+> was the old procedure and it had two reliable failure modes: a bare `gcloud` (launchd
+> reads no shell profile) and a literal `<you>` left in `HOME`, which fails with a
+> credentials error that looks like an IAM problem. The script substitutes both and
+> `plutil -lint`s the result.
 
 ### Prove that compute really is remote
 

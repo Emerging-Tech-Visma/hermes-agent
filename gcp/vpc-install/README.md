@@ -73,7 +73,7 @@ Verified against **Hermes Agent v0.19.0**, GCP as of **2026-07-28**.
 
 ---
 
-## Install in three commands
+## Install in four commands
 
 ```bash
 # 0. Edit 00-vars.sh — project, region, VM name, dashboard user. This is the
@@ -82,13 +82,18 @@ Verified against **Hermes Agent v0.19.0**, GCP as of **2026-07-28**.
 # 1. On your PC (needs gcloud + project Owner/Editor):
 bash 01-gcp-setup.sh
 
-# 2. On the VM:
+# 2. On the VM. Export HERMES_DASHBOARD_PASSWORD to choose your own; omit it and the
+#    installer generates one into ~/.hermes-dashboard-password (mode 600) and tells you
+#    the path. Re-runs REUSE that file — they never silently rotate your password.
 gcloud compute ssh hermes-agent --zone=europe-west2-b --tunnel-through-iap
-export HERMES_DASHBOARD_PASSWORD='choose-a-strong-password'
 bash ~/hermes-install/02-vm-install.sh
 
 # 3. Verify (on the VM) — targets 13/13:
 bash ~/hermes-install/03-verify.sh
+
+# 4. Back on your PC — make the secure gateway permanent (survives sleep/reboot),
+#    then connect the desktop app to http://localhost:9119
+bash scripts/install-gateway-launchagent.sh
 ```
 
 Two manual steps remain, both explained in [INSTALL.md](INSTALL.md):

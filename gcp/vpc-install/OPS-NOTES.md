@@ -801,6 +801,35 @@ bash ~/hermes-install/02-vm-install.sh 2>&1 | tail -20'
 
 Re-running no longer logs you out — the session-signing secret is preserved (0.11.1).
 
+### "The desktop app says Remote gateway sign-in required"
+
+Nine times out of ten the gateway tunnel is simply down, not your credentials. Order of
+checks:
+
+```bash
+lsof -nP -iTCP:9119 -sTCP:LISTEN                 # is anything serving locally?
+launchctl list | grep -i hermes                  # status != 0 means the agent is failing
+curl -s -o /dev/null -w '%{http_code}\n' http://localhost:9119/   # 302 = healthy auth gate
+tail -20 /tmp/hermes-gateway-tunnel.log
+launchctl kickstart -k gui/$(id -u)/com.hermes.gateway-tunnel      # force reconnect
+```
+
+- **302 is success**, not an error — it is the redirect to `/login`.
+- **"Address already in use"** in the log: two tunnels are fighting for 9119. The pre-VPC
+  install shipped a `com.hermes.tunnel` agent (SSH `-L` to a VM in `europe-west1-b` that no
+  longer exists); it fails forever and competes for the port. Boot it out —
+  `launchctl bootout gui/$(id -u)/com.hermes.tunnel` — and verify it is really gone, since
+  KeepAlive can relaunch it between your bootout and your check.
+- **A hand-started tunnel dies with its shell.** If the gateway worked and then stopped for
+  no clear reason, whoever started it closed their terminal or the machine slept. Install
+  the agent: `bash gcp/vpc-install/scripts/install-gateway-launchagent.sh`.
+- **Credentials error in the log** (not an IAM problem): run `gcloud auth login`. launchd
+  starts with almost no environment, which is why the plist sets `HOME` and `PATH`
+  explicitly.
+- Forgotten password: `cat ~/.hermes-dashboard-password` on the VM. Rotate with
+  `HERMES_DASHBOARD_PASSWORD='new' ~/.local/bin/dashboard-setup.sh kennet 9119` — that
+  forces every client to sign in again but preserves the session-signing secret.
+
 ### "Run one agent turn non-interactively" (scripted proof / smoke test)
 
 `hermes -z '<prompt>'` runs a single turn and exits. This is the flag to use in scripts:

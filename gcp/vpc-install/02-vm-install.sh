@@ -408,6 +408,34 @@ systemctl --user daemon-reload
 systemctl --user enable --now memory-backup.timer
 
 if [ "${DASHBOARD_ENABLE}" = "true" ]; then
+  # If the operator didn't export a password, GENERATE one rather than leaving the
+  # dashboard with auth unconfigured. Before this, forgetting the export produced an
+  # install that finished "successfully" with no way to sign in — the failure only showed
+  # up later, at the desktop app. (Added 2026-08-18.)
+  #
+  # PRESERVE an existing file. Regenerating on every run would silently rotate the
+  # password and lock out the desktop app on each re-run — the same trap dashboard-setup.sh
+  # already avoids for the session-signing secret.
+  #
+  # Charset is deliberately ALPHANUMERIC, not `openssl rand -base64`. Base64 emits `+`,
+  # `/` and `=`; `+` is decoded as a SPACE by form/urlencoded parsers, so a base64
+  # password can work in one client and fail in another. `tr -dc A-Za-z0-9` sidesteps that
+  # whole class of problem at no real cost in entropy (32 alnum chars ≈ 190 bits).
+  DASH_PW_FILE="${HOME}/.hermes-dashboard-password"
+  if [ -z "${HERMES_DASHBOARD_PASSWORD:-}" ]; then
+    if [ -s "${DASH_PW_FILE}" ]; then
+      HERMES_DASHBOARD_PASSWORD="$(cat "${DASH_PW_FILE}")"
+      echo "    reusing the existing dashboard password from ${DASH_PW_FILE}"
+    else
+      HERMES_DASHBOARD_PASSWORD="$(LC_ALL=C tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 32)"
+      ( umask 077; printf '%s' "${HERMES_DASHBOARD_PASSWORD}" > "${DASH_PW_FILE}" )
+      chmod 600 "${DASH_PW_FILE}"
+      echo "    generated a dashboard password -> ${DASH_PW_FILE} (mode 600)"
+      echo "    read it with: cat ${DASH_PW_FILE}"
+    fi
+    export HERMES_DASHBOARD_PASSWORD
+  fi
+
   if [ -n "${HERMES_DASHBOARD_PASSWORD:-}" ]; then
     # Report the failure instead of dying mutely. stdout goes to /dev/null to keep the
     # install log readable, which means a non-zero exit here used to end the whole
@@ -469,6 +497,11 @@ Then, FROM YOUR PC, open the secure gateway and connect the desktop app:
   Desktop app -> Settings -> Gateway -> Remote gateway
     URL: http://localhost:${DASHBOARD_PORT}
     Sign in as: ${DASHBOARD_USERNAME}
+    Password:   cat ~/.hermes-dashboard-password   (on the VM, mode 600)
+
+  NOTE: an unauthenticated GET returns HTTP 302 -> /login. That is the auth gate
+  working, not an error. The tunnel belongs to the shell that started it — when that
+  shell exits, localhost:${DASHBOARD_PORT} stops answering until you start it again.
   Or open http://localhost:${DASHBOARD_PORT} in a browser.
 
 Everything the agent does — shell, files, browser, search, memory — runs HERE
