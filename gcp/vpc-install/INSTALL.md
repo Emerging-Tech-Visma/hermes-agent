@@ -52,7 +52,7 @@ YOUR PC                              GOOGLE CLOUD  (project: test-disco-cm)
                                      │  └──────────┬─────────────────────────────┘  │
                                      │             │                                │
                                      │   Private Google Access → Vertex AI          │
-                                     │    gemini-3.6-flash @ global  ⚠️ see §2      │
+                                     │    gemini-3.7-flash @ global  ⚠️ see §2      │
                                      │   Cloud NAT → apt, GitHub, SearXNG upstreams │
                                      │   GCS gs://test-disco-cm-hermes-memory       │
                                      └──────────────────────────────────────────────┘
@@ -79,25 +79,28 @@ between where data lives and where inference happens.
 
 | Model | Role |
 |---|---|
-| `google/gemini-3.6-flash` | **default** |
-| `google/gemini-3.5-flash` | switchable via `/model` |
-| `google/gemini-3.5-flash-lite` | switchable via `/model` |
+| `google/gemini-3.7-flash` | **default** |
+| `google/gemini-3.5-flash` | switchable via `/model`; also the **strict-EU-capable** one |
+
+Honcho's own reasoning runs on `google/gemini-3.5-flash` (`HONCHO_MODEL`) through the
+Vertex shim — see §7 before changing it.
 
 ### Why `global`
 
-Probed directly against Vertex on **2026-07-28** (`:generateContent` POST, HTTP status):
+Re-probed directly against Vertex on **2026-08-18** (`:generateContent` POST, HTTP status):
 
 | Model | eu-w1 | eu-w2 | eu-w3 | eu-w4 | eu-n1 | global |
 |---|---|---|---|---|---|---|
+| `gemini-3.7-flash` | 404 | 404 | 404 | 404 | 404 | **200** |
 | `gemini-3.6-flash` | 404 | 404 | 404 | 404 | 404 | **200** |
-| `gemini-3.5-flash` | 404 | **200** | — | 404 | — | **200** |
-| `gemini-3.5-flash-lite` | 404 | 404 | — | — | — | **200** |
-| `gemini-2.5-flash` | **200** | **200** | — | — | — | — |
-| `gemini-2.5-pro` | **200** | 404 | — | — | — | — |
+| `gemini-3.5-flash` | 404 | **200** | **200** | 404 | 404 | **200** |
+| `gemini-3.5-flash-lite` | 404 | 404 | 404 | 404 | 404 | **200** |
+| `gemini-2.5-flash` | **200** | **200** | **200** | **200** | **200** | **200** |
 
-**No European regional endpoint serves `gemini-3.6-flash` or `gemini-3.5-flash-lite`.**
-Only `gemini-3.5-flash` is available regionally, at `europe-west2`. So running the
-three newest models requires `global`.
+**No European regional endpoint serves `gemini-3.7-flash`**, so running the newest model
+requires `global`. `gemini-3.5-flash` is the newest flash on a regional EU endpoint —
+and it **gained `europe-west3`** since the 2026-07-28 probe, so re-probe rather than
+trusting this table.
 
 > ⚠️ **This is a deliberate EU-residency exception, and it is scoped to inference.**
 > `global` is not region-pinned, so chat requests may be served outside Europe.
@@ -281,7 +284,7 @@ to `~/.hermes/.env` in step 6 of the installer.
 bash ~/hermes-install/03-verify.sh
 ```
 
-Targets **9/9**: Hermes CLI, a real Vertex `:generateContent` call, EU residency,
+Targets **13/13**: Hermes CLI, a real Vertex `:generateContent` call, EU residency,
 Chrome, Playwright, SearXNG JSON API, Honcho, dashboard service, linger.
 
 > The Vertex check makes a genuine inference POST on purpose. A `GET` on a model
@@ -419,7 +422,7 @@ expected behaviour, not a fault.
 | VM `e2-standard-4`, europe-west2, 24/7 | ~$110 |
 | 100 GB pd-balanced | ~$11 |
 | Cloud NAT (gateway + data processing) | ~$35–45 |
-| Vertex `gemini-3.5-flash` tokens, moderate daily team use | ~$75–180 |
+| Vertex `gemini-3.7-flash` tokens, moderate daily team use | ~$75–180 |
 | Honcho (AI Studio + OpenAI, outside GCP) | ~$3–20 |
 | GCS backup | <$1 |
 | **Total** | **~$235–365** |

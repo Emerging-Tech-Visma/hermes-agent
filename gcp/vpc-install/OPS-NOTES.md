@@ -690,7 +690,7 @@ gcloud compute ssh hermes-agent --zone=europe-west2-b --tunnel-through-iap \
   --command='bash ~/hermes-install/03-verify.sh'
 ```
 
-Expect **9/9**. If Honcho fails, its containers are usually just slower than the
+Expect **13/13**. If Honcho fails, its containers are usually just slower than the
 health check — wait 30s and re-run before investigating.
 
 ### Rebooting (vs. stop/start)
@@ -801,6 +801,52 @@ bash ~/hermes-install/02-vm-install.sh 2>&1 | tail -20'
 
 Re-running no longer logs you out — the session-signing secret is preserved (0.11.1).
 
+### "Run one agent turn non-interactively" (scripted proof / smoke test)
+
+`hermes -z '<prompt>'` runs a single turn and exits. This is the flag to use in scripts:
+the **TUI** is what cannot be driven by piped stdin, not the CLI itself — an earlier note
+in this repo wrongly concluded a scripted agent turn was impossible.
+
+```bash
+gcloud compute ssh hermes-agent --zone=europe-west2-b --tunnel-through-iap --command='
+export PATH=$HOME/.local/bin:$PATH
+hermes -z "Create /tmp/hermes-proof and write OK into proof.txt inside it. Reply with the path."
+ls -l /tmp/hermes-proof/'
+```
+
+Proves the whole chain in one shot: model reachable, **tool-calling works on the current
+model**, and the filesystem it touches is the VM's. Used on 2026-08-18 to verify
+`gemini-3.7-flash` really tool-calls, not just answer.
+
+### "Prove Honcho really remembers" (end-to-end, not liveness)
+
+Port checks and single-shot shim completions both pass on a **completely dead** dialectic
+— that is how a Gemini 3.x `HONCHO_MODEL` slips through (see AGENTS.md). This is the
+check that actually matters; `03-verify.sh` test 13 automates it.
+
+```bash
+gcloud compute ssh hermes-agent --zone=europe-west2-b --tunnel-through-iap --command='
+H=http://localhost:8000/v3/workspaces; J="Content-Type: application/json"
+curl -s -X POST $H -H "$J" -d "{\"id\":\"probe\"}" >/dev/null
+curl -s -X POST $H/probe/peers -H "$J" -d "{\"id\":\"p1\"}" >/dev/null
+curl -s -X POST $H/probe/sessions -H "$J" -d "{\"id\":\"s1\"}" >/dev/null
+curl -s -X POST $H/probe/sessions/s1/messages -H "$J" \
+  -d "{\"messages\":[{\"peer_id\":\"p1\",\"content\":\"I keep a tortoise called Gustav.\"}]}" >/dev/null
+curl -s -X POST $H/probe/peers/p1/chat -H "$J" -d "{\"query\":\"What pet do I have?\"}"'
+```
+
+The answer must contain *Gustav*. If it returns an error mentioning
+**`thought_signature`**, `HONCHO_MODEL` is a Gemini 3.x model — set it back to
+`google/gemini-2.5-flash` and re-run `02-vm-install.sh`.
+
+> Two traps if you go looking for the *derived* memory rather than the answer:
+> `…/peers/p1/representation` needs `-d '{"session_id":"s1"}'` — with `{}` it returns
+> `{"representation":""}` even when memory exists — and the deriver **batches for up to 30
+> minutes** (512-token / 1800s gates), so `queue/status` showing N pending / 0 in-progress
+> is normal, not a fault. To see derivation now, set
+> `DERIVER_REPRESENTATION_BATCH_WORK_UNIT_TARGET_TOKENS=0` in `~/honcho/.env`, recreate the
+> deriver, wait ~40s — then put it back. Full detail in AGENTS.md.
+
 ### "Check the Vertex shim behind Honcho"
 
 ```bash
@@ -906,7 +952,7 @@ gcloud compute start-iap-tunnel hermes-agent 9119 --local-host-port=localhost:91
 gcloud compute instances describe hermes-agent --zone=europe-west2-b --format='value(status)'
 
 # ── on the VM ────────────────────────────────────────────────────────────────
-bash ~/hermes-install/03-verify.sh                 # 9/9 health check
+bash ~/hermes-install/03-verify.sh                 # 13/13 health check
 hermes doctor && hermes gateway status             # Hermes' own view
 systemctl --user restart hermes-dashboard.service hermes-gateway.service
 journalctl --user -u hermes-gateway -n 100 --no-pager

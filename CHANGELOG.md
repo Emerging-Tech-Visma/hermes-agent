@@ -20,13 +20,164 @@ library, so the version tracks the **installable configuration** it describes.
 
 ## [Unreleased]
 
-- **Exercise a full agent turn** through the desktop app and confirm files/folders
-  land on the VM (`INSTALL.md` §8). The CLI TUI cannot be driven by piped stdin, so
-  this was not verifiable from a script.
+- **Pin the Honcho clone.** `02-vm-install.sh` does `git clone --depth 1` of `main`,
+  which pins nothing — every install gets a different Honcho.
 - Replace the plaintext dashboard password with a scrypt
   `HERMES_DASHBOARD_BASIC_AUTH_PASSWORD_HASH`.
 - Optional: `serpapi-mcp` as an *additional* MCP tool for true Google SERP data,
   alongside SearXNG rather than replacing it.
+
+---
+
+## [0.13.0] — 2026-08-18
+
+**`gemini-3.7-flash` is the default chat model.** The install was also **torn down and
+rebuilt from an empty project**, which surfaced **four install-blocking defects** that no
+incremental re-run on an existing VM could ever hit. `03-verify.sh` grew 9 → 13 checks and
+passes 13/13. Still **zero external API keys**.
+
+**Honcho stays on `gemini-2.5-flash`** — moving it to `gemini-3.5-flash` was attempted and
+**reverted**: it breaks every dialectic query. Details under *Fixed*.
+
+### Changed
+
+- **Default chat model → `google/gemini-3.7-flash`** (was `gemini-3.6-flash`). Proven with
+  a real tool-using agent turn, not just an HTTP 200 — see *Added*.
+- **Model catalog → `{gemini-3.7-flash, gemini-3.5-flash}`.** `gemini-3.5-flash-lite`
+  **dropped**: with 3.7-flash as flagship and 3.5-flash as the strict-EU-capable fallback,
+  a third flash tier earned nothing. It still answers 200 @ `global` — re-add it to
+  `HERMES_MODELS` if you want it.
+- **`VERTEX_REGION` stays `global`.** Re-probed 2026-08-18 (`:generateContent` POST):
+
+  | Model | eu-w1 | eu-w2 | eu-w3 | eu-w4 | eu-n1 | global |
+  |---|---|---|---|---|---|---|
+  | `gemini-3.7-flash` | 404 | 404 | 404 | 404 | 404 | **200** |
+  | `gemini-3.6-flash` | 404 | 404 | 404 | 404 | 404 | **200** |
+  | `gemini-3.5-flash` | 404 | **200** | **200** | 404 | 404 | **200** |
+  | `gemini-3.5-flash-lite` | 404 | 404 | 404 | 404 | 404 | **200** |
+  | `gemini-2.5-flash` | **200** | **200** | **200** | **200** | **200** | **200** |
+
+  No European regional endpoint serves 3.7-flash, so the EU-residency exception (**chat
+  inference only** — all storage, and Honcho's embeddings, stay in `europe-west2`) still
+  stands. **`gemini-3.5-flash` gained `europe-west3`** since 2026-07-28 — an EU-*member*
+  region — so the strict-EU fallback is widening. This is why the tables carry dates.
+- **VM internal IP is now `10.10.0.3`** (was `10.10.0.2`). It is DHCP-assigned per VM
+  creation; `AGENTS.md` now says not to treat it as a fixed fact.
+
+### Fixed — four defects that only a from-scratch install reveals
+
+1. **Chrome's apt keyring was written mode 0600, killing the install at step 4.**
+   `gpg --dearmor -o` sets 0600 itself (not a umask effect — root's umask is 0022), and
+   apt fetches as the unprivileged `_apt` user, so apt ignored the key and rejected the
+   repo: `E: The repository '…/chrome/deb stable InRelease' is not signed.` Now
+   `chmod 0644` immediately after the dearmor.
+2. **Worse: that failure was unrecoverable by re-running.** The `sources.list.d` entry is
+   written next to the bad keyring, so every *later* `apt-get update` — including the one
+   at **step 1** — failed with exit 100, long before the step-4 code that could repair it.
+   One failed Chrome install permanently broke the documented "idempotent, safe to
+   re-run" guarantee. **Step 1 now self-repairs** any keyring `_apt` cannot read before
+   calling `apt-get update`.
+
+   *Evidence, stated precisely:* the exit-100 failure was observed on the original
+   from-scratch run. A later regression run restored the 0600 keyring and the emptied auth
+   block and confirmed the **self-repair fires and the install completes clean** (8/8,
+   exit 0) — it did **not** re-observe the exit 100, because `apt-get update` reused
+   still-valid cached `InRelease` data instead of re-verifying the signature. So: the
+   blocker is real and recorded from the run that hit it; the regression run proves the
+   repair path works, not that the failure recurs without it.
+3. **`gpg --dearmor -o` blocked on an interactive overwrite prompt** when the keyring
+   already existed, which fails outright over a non-tty `ssh --command`. Added `--yes`.
+4. **`dashboard-setup.sh` died on its first real line on any fresh install.**
+   `EXISTING_SECRET="$(grep … | head -1 | cut …)"` under `set -euo pipefail`: on a new
+   `.env` the grep matches nothing and exits 1, `pipefail` propagates it, and `set -e`
+   killed the script — **silently**, because "no match" prints nothing and
+   `02-vm-install.sh` sent its stdout to `/dev/null`. The whole install ended at step 8
+   with no error message at all. Added `|| true`, hardened the same pattern in
+   `02-vm-install.sh`'s `honcho_key_real()`, and made the caller report the failure with
+   the command to re-run instead of dying mutely.
+
+### Fixed — other
+
+- **`HONCHO_MODEL` reverted to `google/gemini-2.5-flash`; do NOT use Gemini 3.x.**
+  `gemini-3.5-flash` fails every dialectic query with
+  `400 … "Function call is missing a thought_signature"`. Gemini 3.x are thinking models:
+  a function call they emit carries an opaque `thought_signature` that Vertex **requires**
+  echoed back, delivered as `message.extra_content.google.thought_signature` — a Google
+  extension the OpenAI wire format has no field for. Honcho's OpenAI client drops it when
+  re-serialising for the next tool iteration, so Vertex rejects the conversation from
+  iteration two on. **The shim cannot fix it**: it is a pass-through and cannot recreate a
+  signature the client already discarded. A/B on the live box, only this value changed:
+  3.5-flash → HTTP 400 on all 3 retries, no answer; 2.5-flash → 200, facts recalled.
+  **Hermes' own chat is unaffected on 3.7-flash** — different code path, and its provider
+  round-trips signatures correctly.
+- **False "dashboard not responding" warning on every from-scratch install.** The script
+  waited a fixed `sleep 6`, but on a cold VM the dashboard is listening yet not answering
+  at 6s and returns 302 by ~50s. Both `02-vm-install.sh` and `03-verify.sh` now poll
+  instead of probing once. `03-verify.sh` also stops calling 302 a failure — a redirect
+  to `/login` *is* the engaged auth gate.
+- **Stale claim removed: "Honcho has NO Vertex support and needs its OWN keys."** Still
+  in `00-vars.sh` and `02-vm-install.sh`'s fallback message, contradicting
+  `MEMORY_LLM_BACKEND=vertex` (the default since 0.12.0) a few lines below. Also corrected
+  in `AGENTS.md`.
+- **Narrowed an overstated v0.12.0 claim.** `gcp/vpc-install/README.md` said a fact pushed
+  into Honcho was "extracted and correctly recalled". *Recall* is what was demonstrated;
+  extraction into derived conclusions was not, and on Honcho `2163ab1` it does not happen
+  for API-inserted messages at all.
+
+### Added
+
+- **`03-verify.sh`: 9 → 13 checks.** All four new checks cover failures the old suite
+  reported as **PASS**:
+  - **Test 13 — Honcho end-to-end dialectic.** Seeds a fact, asks for it back, asserts it
+    comes out. **The only check that catches a bad `HONCHO_MODEL`** — confirmed to FAIL on
+    3.5-flash and PASS on 2.5-flash. Asserts on the dialectic answer only, deliberately
+    not on the representation (see the deriver known issue).
+  - **Gateway liveness** — `hermes-gateway.service` is a separate unit from the dashboard
+    and nothing in the client UI reveals a dead one, but cron, routines and any messaging
+    bot need it.
+  - **Shim chat returns non-empty content for `HONCHO_MODEL`** — proves the shim's auth
+    injection works. Its comment now records that it **cannot** catch the
+    thought_signature failure, because a single-shot completion has no tool loop.
+  - **Shim embeddings return exactly `VERTEX_EMBED_DIMENSIONS` values** — this path works
+    around a genuinely broken upstream (Vertex's OpenAI-compat `/embeddings` 500s), and a
+    width mismatch fails every pgvector insert while staying invisible to liveness checks.
+- **A scripted agent turn — the long-standing `[Unreleased]` item, now done.**
+  `hermes -z '<prompt>'` runs one turn non-interactively; it is the **TUI** that cannot be
+  piped, not the CLI. Asked to create a directory and file, `gemini-3.7-flash` used its
+  tools and the file landed on the VM. Recorded as an OPS-NOTES recipe.
+- **Remote gateway verified from the client side** — `gcloud compute start-iap-tunnel`
+  plus `curl` from the operator's Mac returns `302 → /login` through the tunnel.
+- **OPS-NOTES recipes**: "Run one agent turn non-interactively" and "Prove Honcho really
+  remembers" (with the thought_signature symptom called out).
+- **Honcho commit SHA recorded** (`2163ab1`, 2026-08-18) in `AGENTS.md`, plus a warning
+  that `git clone --depth 1` of `main` **pins nothing** — so Honcho-specific facts can go
+  stale with no change to this repo.
+- **Documented Honcho's hardcoded 250-token ceiling on the `minimal` dialectic tier**
+  (every other tier gets 8192). Gemini reasoning models spend that budget on reasoning:
+  measured on an 80-token prompt, 3.5-flash used 237 reasoning / 9 content and 2.5-flash
+  236–240 / 6–10 — both truncate, so this is an upstream default to know about, not a
+  reason to pick either model.
+
+### Documented — Honcho memory extraction verified, and two traps that mimic a failure
+
+**Memory extraction works** (Honcho `2163ab1`): nine seeded facts were each extracted
+correctly, and Hermes' own agent turn produced a conclusion in the `hermes` workspace. Two
+behaviours made a healthy install look broken — both now written up in `AGENTS.md`:
+
+- **The deriver batches on purpose, for up to 30 minutes.** It claims a representation
+  work unit only once `DERIVER_REPRESENTATION_BATCH_WORK_UNIT_TARGET_TOKENS` (**512**) is
+  reached or `DERIVER_REPRESENTATION_BATCH_MAX_AGE_SECONDS` (**1800**) expires. A handful
+  of short test messages trips neither, so `queue/status` sits at N pending / 0
+  in-progress and nothing is wrong. Polling backoff is not the cause (30s max interval).
+  Setting the token target to 0 drains the queue in ~40s — useful for verification, but
+  restore it, since 0 means one LLM call per message.
+- **`POST …/peers/{peer}/representation` needs `{"session_id": …}`.** With an empty body it
+  returns `{"representation":""}` — indistinguishable from "nothing was extracted". This
+  is what made the batching look like a hard failure. `…/peers/{peer}/search` needs no
+  session; `conclusions/query` needs `observer`/`observed` inside `filters`.
+
+This is why `03-verify.sh` test 13 asserts on the dialectic answer (immediate) rather than
+the representation (up to 30 min late on a fresh install).
 
 ---
 
