@@ -39,7 +39,9 @@ change to what gets installed.
 - **Repository ruleset `main-protected`** on `main`: pull request required (0 approvals,
   so a solo maintainer can still merge), stale approvals dismissed on push, review
   threads must be resolved, linear history, no force-push, no branch deletion. Direct
-  `git push origin main` is rejected. Repo admins keep a logged bypass for emergencies.
+  `git push origin main` is rejected — **including for repo admins**, whose bypass is
+  scoped to pull requests (`bypass_mode: pull_request`): an admin may force-merge a PR
+  that fails a required check, and that is logged, but nobody pushes to `main`.
   Repo merge settings now allow **squash and rebase only**, and delete the head branch
   on merge.
 - **`.github/workflows/changelog.yml`** — the `changelog` status check, required by the
