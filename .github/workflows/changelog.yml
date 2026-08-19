@@ -1,0 +1,57 @@
+name: changelog
+
+# Every update to `main` must be documented. This check fails a pull request that
+# does not touch CHANGELOG.md. Escape hatch: add the `skip-changelog` label to the
+# PR (for CI-only or typo changes that describe no configuration change).
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  changelog:
+    name: changelog
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require a CHANGELOG.md entry
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+
+          labels=$(gh api "repos/$REPO/pulls/$PR" --jq '.labels[].name')
+          if grep -qx 'skip-changelog' <<<"$labels"; then
+            echo "::notice::'skip-changelog' label present — changelog requirement waived."
+            exit 0
+          fi
+
+          files=$(gh api "repos/$REPO/pulls/$PR/files" --paginate --jq '.[].filename')
+          echo "Files changed in this PR:"
+          echo "$files" | sed 's/^/  /'
+
+          if grep -qx 'CHANGELOG.md' <<<"$files"; then
+            echo "::notice::CHANGELOG.md updated."
+            exit 0
+          fi
+
+          echo "::error::This PR does not update CHANGELOG.md."
+          cat <<'MSG'
+
+          Every update to main must be recorded in CHANGELOG.md.
+
+            * Configuration change (new service, changed default model/region/OS,
+              new variant, re-probed facts) -> add a versioned entry and follow the
+              MAJOR/MINOR/PATCH rules at the top of CHANGELOG.md.
+            * Not yet released -> add a bullet under ## [Unreleased].
+            * Genuinely nothing to document (CI plumbing, typo) -> add the
+              `skip-changelog` label to this PR and re-run.
+
+          MSG
+          exit 1

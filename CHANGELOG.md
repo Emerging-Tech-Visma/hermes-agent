@@ -29,6 +29,35 @@ library, so the version tracks the **installable configuration** it describes.
 
 ---
 
+## [0.14.2] — 2026-08-19
+
+**`main` is protected, and every update must document itself.** Governance only — no
+change to what gets installed.
+
+### Added
+
+- **Repository ruleset `main-protected`** on `main`: pull request required (0 approvals,
+  so a solo maintainer can still merge), stale approvals dismissed on push, review
+  threads must be resolved, linear history, no force-push, no branch deletion. Direct
+  `git push origin main` is rejected. Repo admins keep a logged bypass for emergencies.
+  Repo merge settings now allow **squash and rebase only**, and delete the head branch
+  on merge.
+- **`.github/workflows/changelog.yml`** — the `changelog` status check, required by the
+  ruleset. It fails any PR into `main` whose file list does not contain `CHANGELOG.md`.
+  Escape hatch: the **`skip-changelog`** label waives it for changes that document
+  nothing (CI plumbing, typos).
+- **`.github/pull_request_template.md`** — changelog / version-bump / docs-in-sync and
+  "facts were re-probed and dated" checklists.
+- **`CONTRIBUTING.md`** — the branch → PR → changelog → tag/release workflow, and the
+  exact rules the ruleset enforces.
+
+### Fixed
+
+- The changelog's link block pointed every version at a bare `https://github.com/`.
+  It now carries real compare and tag URLs.
+
+---
+
 ## [0.14.1] — 2026-08-19
 
 Process change, plus the tooling that makes it followable. No change to what gets installed.
@@ -658,6 +687,10 @@ release; recorded so 0.10.0's changes have a baseline.
 
 ---
 
-[Unreleased]: https://github.com/
-[0.10.0]: https://github.com/
-[0.9.0]: https://github.com/
+[Unreleased]: https://github.com/Emerging-Tech-Visma/hermes-agent/compare/v0.14.2...HEAD
+[0.14.2]: https://github.com/Emerging-Tech-Visma/hermes-agent/compare/v0.14.1...v0.14.2
+[0.14.1]: https://github.com/Emerging-Tech-Visma/hermes-agent/compare/v0.14.0...v0.14.1
+[0.14.0]: https://github.com/Emerging-Tech-Visma/hermes-agent/compare/v0.13.0...v0.14.0
+[0.13.0]: https://github.com/Emerging-Tech-Visma/hermes-agent/compare/v0.12.0...v0.13.0
+[0.12.0]: https://github.com/Emerging-Tech-Visma/hermes-agent/releases/tag/v0.12.0
+[0.11.1]: https://github.com/Emerging-Tech-Visma/hermes-agent/releases/tag/v0.11.1

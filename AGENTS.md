@@ -43,6 +43,23 @@ Corollaries:
 - If a full teardown is genuinely not available, say so explicitly in the writeup and
   name what therefore went unverified. Do not let "re-ran it, exit 0" stand in for it.
 
+## How changes land in this repo
+
+**`main` is protected — you cannot push to it.** Every change, including a one-line doc
+fix, goes through a pull request, and **every pull request must update `CHANGELOG.md`**.
+A required GitHub Actions check named `changelog` enforces this; the `skip-changelog`
+label is the only waiver, and it is for changes that document nothing (CI plumbing,
+typos).
+
+```bash
+git switch -c short-topic-branch
+# change + CHANGELOG.md entry in the same commit
+git push -u origin HEAD && gh pr create --fill
+```
+
+Full rules, the ruleset's exact settings, and the release/tag procedure:
+**[CONTRIBUTING.md](CONTRIBUTING.md)**.
+
 ## What gets built
 
 ```
