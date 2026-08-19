@@ -20,8 +20,16 @@ library, so the version tracks the **installable configuration** it describes.
 
 ## [Unreleased]
 
+- **Exercise the virgin-install rule at least once.** v0.14.1 added the rule and
+  `scripts/teardown.sh`, but **the rule has not yet been run**: the v0.13.0/v0.14.0 scripts
+  were validated by restoring the broken preconditions on a live VM, not by installing onto
+  a virgin OS. So the current scripts are *strongly evidenced*, not *proven*, for a
+  from-zero install. Do a teardown → 01 → 02 → 03 pass (expect 13/13) and record the date,
+  Hermes version and Honcho SHA in `AGENTS.md`. Use a throwaway second VM if the live agent
+  should not go down.
 - **Pin the Honcho clone.** `02-vm-install.sh` does `git clone --depth 1` of `main`,
-  which pins nothing — every install gets a different Honcho.
+  which pins nothing — every install gets a different Honcho. Until then, "it worked on
+  date X with SHA Y" is the strongest claim available.
 - Replace the plaintext dashboard password with a scrypt
   `HERMES_DASHBOARD_BASIC_AUTH_PASSWORD_HASH`.
 - Optional: `serpapi-mcp` as an *additional* MCP tool for true Google SERP data,
