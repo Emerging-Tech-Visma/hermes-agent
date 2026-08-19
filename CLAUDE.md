@@ -12,7 +12,7 @@ install order, and the gotchas learned along the way — lives in **[AGENTS.md](
 ## Where things are
 
 - **[README.md](README.md)** — the front door: what gets built, quick start, repo map.
-- **[CHANGELOG.md](CHANGELOG.md)** — version history. Currently **0.14.0**.
+- **[CHANGELOG.md](CHANGELOG.md)** — version history. Currently **0.14.1**.
   **Add an entry here for any change to the installable configuration** (new service,
   changed default model/region/OS, new variant, re-probed facts). Keep the
   MAJOR/MINOR/PATCH rules stated at the top of that file.
@@ -30,6 +30,11 @@ install order, and the gotchas learned along the way — lives in **[AGENTS.md](
 
 ## Working rules
 
+- **Always validate from a virgin installation.** Tear the install down
+  (`gcp/vpc-install/scripts/teardown.sh`) and build from zero — never sign off an install
+  change because a re-run over the existing VM exited 0. A from-scratch rebuild on
+  2026-08-18 found five defects that incremental re-runs had hidden for three versions,
+  four of them install-blocking. Full rule and the list: **[AGENTS.md](AGENTS.md)**.
 - **Verify, don't trust the docs in here.** Facts carry dates because model
   availability, GCP image families and pricing all move. Re-probe before relying on a
   claim, and update the date when you do. `AGENTS.md` once described a VM that had been

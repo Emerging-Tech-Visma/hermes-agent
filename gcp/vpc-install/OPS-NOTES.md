@@ -777,6 +777,33 @@ bash ~/hermes-install/03-verify.sh'
 
 Restart the **shim before Honcho** — Honcho's first call fails if the shim is down.
 
+### "Start over from a virgin installation" (required before signing off install changes)
+
+```bash
+bash gcp/vpc-install/scripts/teardown.sh               # VM + network + SA, keeps the bucket
+bash gcp/vpc-install/scripts/teardown.sh --with-bucket # also destroys memory backups
+bash gcp/vpc-install/scripts/teardown.sh --vm-only     # just the VM (network/NAT stay, NAT keeps billing)
+```
+
+Requires typing the VM name to confirm; nothing is deleted before that. It also removes the
+local gateway LaunchAgent, since leaving one pointed at a deleted VM makes it fail forever
+and squat port 9119.
+
+Confirm it really is virgin, then reinstall:
+
+```bash
+gcloud compute instances list --project=test-disco-cm   # expect: Listed 0 items.
+gcloud compute networks list  --project=test-disco-cm   # expect: no hermes-vpc
+```
+
+**Why this is mandatory before signing off an install change:** a re-run over a live VM
+cannot see fresh-state defects. On 2026-08-18 a from-scratch rebuild found five, four of
+them install-blocking, all latent across three releases that had been re-run and declared
+working. Details in [AGENTS.md](../../AGENTS.md).
+
+> Cost note: `--vm-only` leaves Cloud NAT in place, and **NAT keeps billing with no VM
+> attached**. Full teardown is the cheaper default.
+
 ### "Re-apply the whole managed config from the repo"
 
 The installer is idempotent; this is the blunt fix for config drift:

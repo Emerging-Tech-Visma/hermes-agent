@@ -29,6 +29,44 @@ library, so the version tracks the **installable configuration** it describes.
 
 ---
 
+## [0.14.1] — 2026-08-19
+
+Process change, plus the tooling that makes it followable. No change to what gets installed.
+
+### Added
+
+- **RULE: validate from a virgin installation** — stated at the top of `AGENTS.md`, repeated
+  in its agent-conventions section, and pointed to from `CLAUDE.md`, `INSTALL.md` and the
+  install README. Never sign off an install change because a re-run over an existing VM
+  exited 0.
+
+  The evidence, tabulated in `AGENTS.md`: the 2026-08-18 from-scratch rebuild found **five
+  defects an incremental re-run passes straight over** — an apt keyring written 0600, the
+  poisoned `sources.list.d` that made every later re-run fail at step 1, a `gpg --dearmor`
+  overwrite prompt, an `errexit` trap that killed `dashboard-setup.sh` silently, and a
+  `sleep 6` too short for a cold dashboard. **Four were install-blocking**, and all five sat
+  latent across three releases that had been re-run and declared working. A re-run proves
+  the installer is *idempotent*; it says nothing about whether it *installs*.
+- **`scripts/teardown.sh`** — one command back to virgin, because a rule nobody can follow
+  cheaply is a rule nobody follows. Deletes the VM, firewall rules, Cloud NAT, router,
+  subnet, VPC and service account, in dependency order. Requires typing the VM name to
+  confirm; nothing is deleted before that.
+  - **Keeps the memory bucket by default** (`--with-bucket` to destroy the backups too),
+    since that is the only irreplaceable state.
+  - `--vm-only` for a quick VM rebuild, with a warning that **Cloud NAT keeps billing with
+    no VM attached**, so full teardown is the cheaper default.
+  - Also removes the local gateway LaunchAgent: left pointing at a deleted VM it fails
+    forever and squats port 9119 — precisely the stale-agent mess found on the operator's
+    Mac from the previous install.
+
+### Changed
+
+- **`INSTALL.md` now warns that 13/13 on an existing VM is not evidence a fresh install
+  works.** The checks confirm a *running* system is healthy; they are structurally unable to
+  see fresh-state defects.
+
+---
+
 ## [0.14.0] — 2026-08-18
 
 **The secure gateway is now permanent by default, and the installer no longer lets you
