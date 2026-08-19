@@ -18,8 +18,15 @@ Enforced by a GitHub repository ruleset (`main-protected`), not by convention:
 | No force-push, no deletion | `main`'s history is linear and permanent |
 | Linear history | Squash or rebase merges only — no merge commits |
 
-Repository admins can bypass the ruleset for emergencies. Bypasses are recorded in
-the ruleset's audit trail — use them and then follow up with a real PR.
+**Admins cannot push to `main` either.** The admin bypass is scoped to pull requests
+(`bypass_mode: pull_request`), so the emergency escape hatch is "merge a PR that fails a
+required check", not "push straight to `main`". Bypasses are recorded in the ruleset's
+audit trail.
+
+Because status checks are *strict*, a PR must be up to date with `main` before it can
+merge. With concurrent agent sessions in this repo, expect the occasional **Update
+branch** click when someone else's PR lands first — it re-runs the `changelog` check,
+which takes about ten seconds.
 
 ## The workflow
 
