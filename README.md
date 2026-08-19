@@ -5,7 +5,7 @@
 **A reproducible runbook for running a [Hermes Agent](https://hermes-agent.nousresearch.com)
 on Google Cloud — privately, EU-resident data, billed through your own project.**
 
-[![version](https://img.shields.io/badge/version-0.14.1-blue)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.14.2-blue)](CHANGELOG.md)
 [![Hermes](https://img.shields.io/badge/Hermes-v0.19.0-8A2BE2)](https://hermes-agent.nousresearch.com)
 [![data](https://img.shields.io/badge/data-europe--west2-green)](#eu-data-residency)
 [![inference](https://img.shields.io/badge/inference-vertex%20global-yellow)](#eu-data-residency)
@@ -170,7 +170,8 @@ European region — and **re-probe** rather than trusting the table above.
 | [gcp/vpc-install/INSTALL.md](gcp/vpc-install/INSTALL.md) | Full guide — architecture, every command, security model, cost, design rationale. |
 | [gcp/vpc-install/OPS-NOTES.md](gcp/vpc-install/OPS-NOTES.md) | **Day-2 ops over SSH** — idle/wedged gateways, backend upgrades, service updates, symptom→cause table. |
 | [AGENTS.md](AGENTS.md) | Master runbook: architecture, canonical facts, and **lessons learned** (read before debugging anything). |
-| [CHANGELOG.md](CHANGELOG.md) | Version history. Currently **0.14.1**. |
+| [CHANGELOG.md](CHANGELOG.md) | Version history. Currently **0.14.2**. |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | How changes land: `main` is PR-only, and every PR must update the changelog. |
 
 **Variants and deeper topics** (from the earlier public-IP install — still the best
 reference for these subjects)
@@ -224,6 +225,10 @@ The full list lives in [AGENTS.md](AGENTS.md). The ones most likely to bite you:
   `__PLACEHOLDER__` tokens filled at install time.
 - **Tooling:** [UV](https://docs.astral.sh/uv/) for Python/CLI,
   [Bun](https://bun.sh/) for TS/web.
+- **`main` is PR-only, and every update ships a changelog entry.** Direct pushes to
+  `main` are rejected by a repository ruleset; the required `changelog` check fails
+  any PR that does not touch [CHANGELOG.md](CHANGELOG.md). See
+  [CONTRIBUTING.md](CONTRIBUTING.md).
 - **Agent instructions live in [AGENTS.md](AGENTS.md)**, read by both Claude Code and
   Codex. Keep it and `gcp/` in sync when the install changes — faithful replication
   is the point of this repo.
