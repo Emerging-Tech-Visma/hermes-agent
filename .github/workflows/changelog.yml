@@ -1,8 +1,11 @@
 name: changelog
 
-# Every update to `main` must be documented. This check fails a pull request that
-# does not touch CHANGELOG.md. Escape hatch: add the `skip-changelog` label to the
-# PR (for CI-only or typo changes that describe no configuration change).
+# Every update to `main` must document itself and claim a version. This check fails a
+# pull request that does not (a) touch CHANGELOG.md, (b) add a version above the one on
+# `main`, and (c) keep the version badge in README.md / CLAUDE.md in step with it.
+#
+# Escape hatch: the `skip-changelog` label waives all three, for changes that document
+# nothing (CI plumbing, typos) and therefore ship no release.
 
 on:
   pull_request:
@@ -18,25 +21,38 @@ jobs:
     name: changelog
     runs-on: ubuntu-latest
     steps:
-      - name: Require a CHANGELOG.md entry
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Waive the check when labelled `skip-changelog`
+        id: waiver
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
-
-          labels=$(gh api "repos/$REPO/pulls/$PR" --jq '.labels[].name')
-          if grep -qx 'skip-changelog' <<<"$labels"; then
-            echo "::notice::'skip-changelog' label present — changelog requirement waived."
-            exit 0
+          if gh api "repos/$REPO/pulls/$PR" --jq '.labels[].name' | grep -qx 'skip-changelog'; then
+            echo "::notice::'skip-changelog' label present — changelog and version bump waived. No release will be cut."
+            echo "waived=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "waived=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: CHANGELOG.md must be updated
+        if: steps.waiver.outputs.waived == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
           files=$(gh api "repos/$REPO/pulls/$PR/files" --paginate --jq '.[].filename')
           echo "Files changed in this PR:"
           echo "$files" | sed 's/^/  /'
 
-          if grep -qx 'CHANGELOG.md' <<<"$files"; then
+          if grep -qxF 'CHANGELOG.md' <<<"$files"; then
             echo "::notice::CHANGELOG.md updated."
             exit 0
           fi
@@ -44,14 +60,69 @@ jobs:
           echo "::error::This PR does not update CHANGELOG.md."
           cat <<'MSG'
 
-          Every update to main must be recorded in CHANGELOG.md.
+          Every update to main must be recorded in CHANGELOG.md, under a NEW version —
+          the release notes on the Releases page are generated from that entry.
 
-            * Configuration change (new service, changed default model/region/OS,
-              new variant, re-probed facts) -> add a versioned entry and follow the
-              MAJOR/MINOR/PATCH rules at the top of CHANGELOG.md.
-            * Not yet released -> add a bullet under ## [Unreleased].
             * Genuinely nothing to document (CI plumbing, typo) -> add the
-              `skip-changelog` label to this PR and re-run.
+              `skip-changelog` label to this PR and re-run. No release is cut.
 
           MSG
           exit 1
+
+      - name: The version must be bumped above `main`
+        if: steps.waiver.outputs.waived == 'false'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          git show "$BASE_SHA:CHANGELOG.md" > /tmp/base-changelog.md
+
+          base=$(python3 .github/scripts/changelog.py --file /tmp/base-changelog.md top)
+          head=$(python3 .github/scripts/changelog.py top)
+          echo "main is at $base; this PR declares $head"
+
+          if [ "$base" = "$head" ]; then
+            echo "::error::This PR does not bump the version — CHANGELOG.md still tops out at $base."
+            cat <<MSG
+
+          Every PR ships a new version, and every version becomes a GitHub release.
+          Add a new '## [x.y.z] — YYYY-MM-DD' section ABOVE [$base] describing what
+          changed. If another PR landed $base while yours was open, renumber yours to
+          the next version above it.
+
+          MSG
+            exit 1
+          fi
+
+          if ! python3 .github/scripts/changelog.py newer "$head" "$base"; then
+            echo "::error::Declared version $head is not above main's $base."
+            echo "Renumber your entry to a version greater than $base."
+            exit 1
+          fi
+
+          if git ls-remote --exit-code --tags origin "refs/tags/v$head" >/dev/null 2>&1; then
+            echo "::error::v$head is already released. Renumber this PR's entry."
+            exit 1
+          fi
+
+          echo "version=$head" >> "$GITHUB_ENV"
+          echo "::notice::Version bumped $base -> $head."
+
+      - name: The version badge must match
+        if: steps.waiver.outputs.waived == 'false'
+        run: |
+          set -euo pipefail
+          bad=0
+          badge=$(grep -o 'badge/version-[0-9.]*-blue' README.md | head -1 | sed 's|badge/version-||; s|-blue||')
+          claude=$(grep -o 'Currently \*\*[0-9][0-9.]*[0-9]\*\*' CLAUDE.md | head -1 | tr -dc '0-9.')
+
+          if [ "$badge" != "$version" ]; then
+            echo "::error file=README.md::Version badge says $badge, CHANGELOG.md says $version."
+            bad=1
+          fi
+          if [ "$claude" != "$version" ]; then
+            echo "::error file=CLAUDE.md::'Currently' says $claude, CHANGELOG.md says $version."
+            bad=1
+          fi
+          [ "$bad" = 0 ] && echo "::notice::README.md and CLAUDE.md both say $version."
+          exit $bad

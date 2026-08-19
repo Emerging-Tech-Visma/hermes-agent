@@ -12,7 +12,7 @@ install order, and the gotchas learned along the way — lives in **[AGENTS.md](
 ## Where things are
 
 - **[README.md](README.md)** — the front door: what gets built, quick start, repo map.
-- **[CHANGELOG.md](CHANGELOG.md)** — version history. Currently **0.14.2**.
+- **[CHANGELOG.md](CHANGELOG.md)** — version history. Currently **0.14.3**.
   **Add an entry here for any change to the installable configuration** (new service,
   changed default model/region/OS, new variant, re-probed facts). Keep the
   MAJOR/MINOR/PATCH rules stated at the top of that file.
@@ -43,8 +43,12 @@ install order, and the gotchas learned along the way — lives in **[AGENTS.md](
   Probe the regional Vertex endpoint with a real `:generateContent` POST.
 - **Never commit secrets.** Templates use `__PLACEHOLDER__` tokens filled at install
   time; passwords come from the environment or are set on the VM.
-- **`main` is PR-only.** Never push to `main`; branch, open a PR, and include a
-  `CHANGELOG.md` entry in the same PR — a required `changelog` check blocks any PR
-  without one (waiver: the `skip-changelog` label). See [CONTRIBUTING.md](CONTRIBUTING.md).
+- **`main` is PR-only, and every PR bumps the version.** Never push to `main`; branch,
+  open a PR, and in the same PR add a **new** `## [x.y.z]` entry to `CHANGELOG.md` above
+  the current one, then update the version badge in `README.md` and the "Currently" line
+  here. The required `changelog` check enforces all three (waiver: the `skip-changelog`
+  label, which also means no release). On merge the entry is auto-published as a GitHub
+  release — **never tag or cut a release by hand**. Write the entry as release notes.
+  See [CONTRIBUTING.md](CONTRIBUTING.md).
 - Keep `AGENTS.md`, `README.md`, `CHANGELOG.md` and the install package in sync —
   faithful replication is the entire point of this repo.
