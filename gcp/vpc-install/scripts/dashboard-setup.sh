@@ -40,7 +40,14 @@ chmod 600 "${ENV_FILE}"
 #
 # Rotate deliberately with:  ROTATE_DASHBOARD_SECRET=1 dashboard-setup.sh ...
 # (do that when a password may have leaked — it forces every client to re-auth).
-EXISTING_SECRET="$(grep '^HERMES_DASHBOARD_BASIC_AUTH_SECRET=' "${ENV_FILE}" 2>/dev/null | head -1 | cut -d= -f2-)"
+# `|| true` is LOAD-BEARING under `set -euo pipefail`. On a FRESH install .env has no
+# secret yet, so grep exits 1; `pipefail` propagates that through the pipeline, the
+# command substitution inherits it, and `set -e` kills this script on its first real
+# line — with NO error message, because grep's "no match" is silent. 02-vm-install.sh
+# calls this with stdout on /dev/null, so the whole install died at step 8 showing
+# nothing at all. Found on a from-scratch install 2026-08-18; it could not reproduce on
+# an existing box, where .env already contained the line and grep succeeded.
+EXISTING_SECRET="$(grep '^HERMES_DASHBOARD_BASIC_AUTH_SECRET=' "${ENV_FILE}" 2>/dev/null | head -1 | cut -d= -f2- || true)"
 if [ "${ROTATE_DASHBOARD_SECRET:-0}" = "1" ] || [ -z "${EXISTING_SECRET}" ]; then
   SECRET="$(openssl rand -base64 32)"
   if [ -n "${EXISTING_SECRET}" ]; then

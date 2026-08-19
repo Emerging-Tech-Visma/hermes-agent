@@ -56,38 +56,45 @@ export MEMORY_BUCKET="gs://${PROJECT_ID}-hermes-memory"
 # ---------------------------------------------------------------------------
 # Vertex AI models
 # ---------------------------------------------------------------------------
-# ⚠️  EU-RESIDENCY EXCEPTION — INFERENCE ONLY (owner decision, re-affirmed 2026-07-28)
+# ⚠️  EU-RESIDENCY EXCEPTION — INFERENCE ONLY (owner decision, re-affirmed 2026-08-18)
 #
 # VERTEX_REGION is `global`, which is NOT region-pinned. This is a deliberate,
 # owner-approved relaxation of the "European regional endpoint only" rule, taken to
-# run the three latest Gemini flash models. Everything else — VM, subnet, GCS
-# bucket, backups, SearXNG, Honcho — stays in europe-west2, so DATA AT REST
-# REMAINS IN A EUROPEAN REGION. Only the inference endpoint is non-region-pinned.
+# run the two latest Gemini flash models. Everything else — VM, subnet, GCS
+# bucket, backups, SearXNG, Honcho, embeddings — stays in europe-west2, so DATA AT
+# REST REMAINS IN A EUROPEAN REGION. Only the inference endpoint is non-region-pinned.
 #
-# Why it is unavoidable for these models. Re-probed 2026-07-28
+# Why it is unavoidable for gemini-3.7-flash. Re-probed 2026-08-18
 # (`:generateContent` POST, HTTP status):
 #
 #   MODEL                    | eu-w1 | eu-w2 | eu-w3 | eu-w4 | eu-n1 | global
+#   gemini-3.7-flash         |  404  |  404  |  404  |  404  |  404  |  200
 #   gemini-3.6-flash         |  404  |  404  |  404  |  404  |  404  |  200
-#   gemini-3.5-flash         |  404  |  200  |   -   |  404  |   -   |  200
-#   gemini-3.5-flash-lite    |  404  |  404  |   -   |   -   |   -   |  200
+#   gemini-3.5-flash         |  404  |  200  |  200  |  404  |  404  |  200
+#   gemini-3.5-flash-lite    |  404  |  404  |  404  |  404  |  404  |  200
+#   gemini-2.5-flash         |  200  |  200  |  200  |  200  |  200  |  200
 #
-# No European regional endpoint serves 3.6-flash or 3.5-flash-lite. Only
-# gemini-3.5-flash is available regionally, at europe-west2.
+# No European regional endpoint serves 3.7-flash. gemini-3.5-flash is the newest
+# flash on a regional EU endpoint — and it has GAINED europe-west3 since the
+# 2026-07-28 probe (was 404 there), so the regional fallback is widening.
 #
 # TO REVERT to strict regional-EU inference:
 #   VERTEX_REGION="europe-west2"  +  HERMES_MODELS="google/gemini-3.5-flash google/gemini-2.5-flash"
-# and re-probe — flip back to a regional endpoint the moment 3.6-flash and
-# flash-lite land in a European region. 03-verify.sh prints a residency warning
-# whenever `global` is in use.
+#   HERMES_MODEL="google/gemini-3.5-flash"
+# and re-probe — flip back to a regional endpoint the moment 3.7-flash lands in a
+# European region. 03-verify.sh prints a residency warning whenever `global` is in use.
 export VERTEX_REGION="global"
 
-# The three latest Gemini flash models. The FIRST entry is the default; all are
+# The two flash models this install offers. The FIRST entry is the default; both are
 # selectable via `/model` and the desktop dropdown.
 # Only list models that actually answer at VERTEX_REGION — a dead model shows up as
 # a selectable-but-broken row in the picker. Re-probe after any change.
-export HERMES_MODEL="google/gemini-3.6-flash"        # default (newest)
-export HERMES_MODELS="google/gemini-3.6-flash google/gemini-3.5-flash google/gemini-3.5-flash-lite"
+#
+# 3.5-flash-lite was dropped 2026-08-18: with 3.7-flash as the flagship and
+# 3.5-flash as the strict-EU-capable fallback, a third flash tier earned nothing.
+# It still works @ global if you want it back — just re-add it to HERMES_MODELS.
+export HERMES_MODEL="google/gemini-3.7-flash"        # default (newest)
+export HERMES_MODELS="google/gemini-3.7-flash google/gemini-3.5-flash"
 
 # ---------------------------------------------------------------------------
 # Tooling on the VM
@@ -100,9 +107,10 @@ export WEB_BACKEND="searxng"          # Hermes web.backend
 # Memory provider. Two supported values here:
 #
 #   "honcho"  — self-hosted Honcho (Docker, Postgres/pgvector) on this VM.
-#               ⚠️  Honcho has NO Vertex support and needs its OWN keys: an
-#               AI Studio Gemini key + an OpenAI embeddings key in ~/honcho/.env.
-#               That is the only component NOT billed through your GCP project.
+#               Honcho has no Vertex transport of its own, but MEMORY_LLM_BACKEND
+#               below routes it to Vertex through a local shim, so with the default
+#               (=vertex) it needs NO external API keys and bills to this GCP
+#               project. Only MEMORY_LLM_BACKEND=gemini needs an outside key.
 #
 #   "builtin" — Hermes' built-in memory only (MEMORY.md + USER.md). No Docker, no
 #               extra keys, no second billing surface, nothing leaves the VM.
@@ -133,10 +141,38 @@ export HONCHO_PORT="8000"
 export MEMORY_LLM_BACKEND="vertex"
 
 # Model Honcho uses for extraction / summary / dialectic / dream.
-# Default is 2.5-flash, not 3.6-flash, on purpose: 3.6-flash spends part of its
-# output budget on reasoning tokens (observed: max_tokens=20 consumed entirely by
-# 16 reasoning tokens, empty content), which is wasteful for Honcho's short
-# structured extractions. 3.6-flash does work if you want it.
+#
+# 🛑 DO NOT SET THIS TO A GEMINI 3.x MODEL. Tested on the live install 2026-08-18:
+# `gemini-3.5-flash` makes Honcho's dialectic fail, every time, with
+#
+#   openai.BadRequestError: 400 - vertex returned 400:
+#     "Function call is missing a thought_signature..."
+#
+# WHY. Gemini 3.x are thinking models: when they emit a function call they attach an
+# opaque `thought_signature`, and Vertex REQUIRES it to be echoed back on the following
+# turn. It rides in the OpenAI-compat response as
+# `choices[0].message.extra_content.google.thought_signature` — a Google extension the
+# OpenAI wire format has no concept of. Honcho's OpenAI client drops unknown fields when
+# it re-serialises the assistant message for the next tool iteration, so from iteration
+# two onward Vertex rejects the whole conversation. The shim cannot fix this: it is a
+# pass-through and cannot invent a signature Honcho has already discarded.
+#
+# `gemini-2.5-flash` never issues a thought_signature, so nothing can be lost and the
+# multi-iteration tool loop works. Verified 2026-08-18 by A/B on the live box (same
+# install, only this value changed):
+#
+#   HONCHO_MODEL              dialectic result
+#   google/gemini-3.5-flash   HTTP 400 on all 3 retries, no answer
+#   google/gemini-2.5-flash   HTTP 200, recalled the seeded facts correctly
+#
+# This is why 03-verify.sh test 11 is NOT sufficient on its own: a single-shot chat
+# completion through the shim SUCCEEDS with 3.5-flash (no tool loop, so no signature to
+# lose). Only a real multi-iteration dialectic exposes it — see OPS-NOTES.md
+# "Prove Honcho really remembers" and re-run it if you ever change this value.
+#
+# Hermes' OWN chat is unaffected and correctly runs gemini-3.7-flash: it does not use
+# this shim, and its Vertex provider round-trips thought signatures properly (proved
+# 2026-08-18 with a real tool-using agent turn that wrote a file on the VM).
 export HONCHO_MODEL="google/gemini-2.5-flash"
 export HONCHO_EMBED_MODEL="gemini-embedding-001"
 

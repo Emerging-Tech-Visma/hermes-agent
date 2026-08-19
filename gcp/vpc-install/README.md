@@ -16,7 +16,7 @@ Desktop app / browser  ──IAP tunnel──►  GCE VM (no public IP, private 
                                          ├─ SearXNG      :8080  (localhost only)
                                          ├─ Honcho memory :8000  (localhost only)
                                          ├─ Vertex shim   :8900  (localhost only)
-                                         └─ Vertex AI  gemini-3.6-flash @ global ⚠️
+                                         └─ Vertex AI  gemini-3.7-flash @ global ⚠️
 ```
 
 | | |
@@ -25,7 +25,7 @@ Desktop app / browser  ──IAP tunnel──►  GCE VM (no public IP, private 
 | VM | `e2-standard-4`, 100 GB pd-balanced, no external IP |
 | Network | custom VPC + subnet, Private Google Access, Cloud NAT, IAP-only ingress |
 | Data residency | infra + storage `europe-west2`; ⚠️ inference on `global` (not region-pinned) |
-| Model | Vertex AI `gemini-3.6-flash` (default) + `gemini-3.5-flash` + `gemini-3.5-flash-lite` |
+| Model | Vertex AI `gemini-3.7-flash` (default) + `gemini-3.5-flash`; Honcho's own reasoning on `gemini-3.5-flash` |
 | Search | self-hosted SearXNG (no API key, nothing leaves the region but the query itself) |
 | Memory | self-hosted Honcho (Postgres/pgvector), **backed by Vertex — no external API keys** |
 | Browser | Chrome + Playwright Chromium, headless |
@@ -34,27 +34,46 @@ Desktop app / browser  ──IAP tunnel──►  GCE VM (no public IP, private 
 
 Verified against **Hermes Agent v0.19.0**, GCP as of **2026-07-28**.
 
-> **Status: executed end-to-end on `test-disco-cm`, 2026-07-28 — 8/9 verified.**
-> Both scripts exited 0. Confirmed live: no external IP, IAP-only firewall (the only
-> `0.0.0.0/0` rule is the DENY), Cloud NAT, Hermes v0.19.0, Chrome 150, Playwright
-> Chromium, Vertex `gemini-3.6-flash` @ `global` HTTP 200 (all three models probed 200), SearXNG JSON API
-> returning results, dashboard auth gate returning 401 unauthenticated and
-> `{"ok":true}` on login, gateway active, linger on.
+> **Status: REBUILT FROM SCRATCH on `test-disco-cm`, 2026-08-18 — `03-verify.sh` 13/13.**
+> The project was empty (0 instances) beforehand, so this is a true from-zero run of both
+> scripts, not an edit of a live box. Confirmed live: no external IP, IAP-only firewall
+> (the only `0.0.0.0/0` rule is the DENY), Cloud NAT, Hermes v0.20.4, Chrome 151,
+> Playwright Chromium, Vertex `gemini-3.7-flash` @ `global` HTTP 200, SearXNG JSON API
+> returning 20 results, dashboard auth gate returning **302 → `/login`** unauthenticated,
+> gateway active, linger on, shim embeddings at the correct 1536 dims.
 >
-> **Honcho now runs on Vertex with zero external API keys** (v0.12.0) via a local
-> OpenAI-compat shim. Verified end-to-end: a fact pushed into Honcho was extracted and
-> correctly recalled, and stopping the shim makes the dialectic fail with HTTP 500 —
-> proving the Vertex dependency. `03-verify.sh` is **9/9**.
+> **A full agent turn is now proven** — no longer an open item. `hermes -z '<prompt>'`
+> runs one non-interactively (the TUI is what cannot be piped, not the CLI): asked to
+> create a directory and file, `gemini-3.7-flash` used its tools and the file landed
+> **on the VM**. Real tool-calling on the new model, verified.
 >
-> A full agent *turn* has not been scripted (the CLI TUI cannot be driven by piped
-> stdin) — do that from the desktop app using the proof step in
-> [INSTALL.md §8](INSTALL.md). The live run found and fixed two real defects; see
-> [CHANGELOG 0.10.1](../../CHANGELOG.md). Model/region moved to the three latest
-> flash models on `global` in [0.11.0](../../CHANGELOG.md).
+> **Remote gateway proven from the client side too**: `gcloud compute start-iap-tunnel`
+> then `curl` from the operator's Mac returns `302 → /login` through the tunnel.
+>
+> **The from-scratch run found FOUR install-blocking defects** that an incremental
+> re-run on an existing box could never surface — all fixed here, see
+> [CHANGELOG 0.13.0](../../CHANGELOG.md).
+>
+> **Honcho runs on Vertex with zero external API keys** (v0.12.0) via a local
+> OpenAI-compat shim; stopping the shim makes the dialectic fail, proving the Vertex
+> dependency. Its **dialectic recall is verified** end-to-end (seed a fact, ask for it
+> back — now `03-verify.sh` test 13).
+>
+> **Memory extraction is verified, not just recall**: nine seeded facts were each
+> extracted correctly, and the Hermes agent turn above produced its own conclusion
+> (`"hermes created a file"`) in the `hermes` workspace.
+>
+> ⚠️ **`HONCHO_MODEL` must not be a Gemini 3.x model** (dated 2026-08-18). They attach a
+> `thought_signature` to function calls which Honcho drops, and Vertex then 400s every
+> dialectic query, so it stays on `gemini-2.5-flash` — while Hermes' own chat runs
+> `gemini-3.7-flash` fine. Also note the deriver **batches for up to 30 minutes** by
+> design, and `…/representation` needs a `session_id` or it returns `""` — together these
+> make a perfectly healthy install look broken. All written up in
+> [AGENTS.md](../../AGENTS.md).
 
 ---
 
-## Install in three commands
+## Install in four commands
 
 ```bash
 # 0. Edit 00-vars.sh — project, region, VM name, dashboard user. This is the
@@ -63,13 +82,18 @@ Verified against **Hermes Agent v0.19.0**, GCP as of **2026-07-28**.
 # 1. On your PC (needs gcloud + project Owner/Editor):
 bash 01-gcp-setup.sh
 
-# 2. On the VM:
+# 2. On the VM. Export HERMES_DASHBOARD_PASSWORD to choose your own; omit it and the
+#    installer generates one into ~/.hermes-dashboard-password (mode 600) and tells you
+#    the path. Re-runs REUSE that file — they never silently rotate your password.
 gcloud compute ssh hermes-agent --zone=europe-west2-b --tunnel-through-iap
-export HERMES_DASHBOARD_PASSWORD='choose-a-strong-password'
 bash ~/hermes-install/02-vm-install.sh
 
-# 3. Verify (on the VM) — targets 9/9:
+# 3. Verify (on the VM) — targets 13/13:
 bash ~/hermes-install/03-verify.sh
+
+# 4. Back on your PC — make the secure gateway permanent (survives sleep/reboot),
+#    then connect the desktop app to http://localhost:9119
+bash scripts/install-gateway-launchagent.sh
 ```
 
 Two manual steps remain, both explained in [INSTALL.md](INSTALL.md):
@@ -156,10 +180,10 @@ systemd/ (user units, kept alive by linger)
    ```
 
 > ⚠️ **Region and model are coupled — changing one can break the other.**
-> `VERTEX_REGION` is `global` here because `gemini-3.6-flash` and
-> `gemini-3.5-flash-lite` return **404 in every European regional endpoint** tested
-> (west1/2/3/4, north1 — probed 2026-07-28). `gemini-3.5-flash` is regional only at
-> `europe-west2`; `europe-west1` caps at `gemini-2.5-flash`. `global` is **not
+> `VERTEX_REGION` is `global` here because `gemini-3.7-flash` returns **404 in every
+> European regional endpoint** tested (west1/2/3/4, north1 — re-probed 2026-08-18).
+> `gemini-3.5-flash` is regional at `europe-west2` **and `europe-west3`** (west3 is new
+> since 2026-07-28); `europe-west1` caps at `gemini-2.5-flash`. `global` is **not
 > region-pinned** — the exception is scoped to inference, while VM/bucket/backups stay
 > in `europe-west2`. If you change either setting, **re-probe**: the one-liner is in
 > [INSTALL.md](INSTALL.md) §12, `03-verify.sh` makes a real inference call so a wrong

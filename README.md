@@ -5,7 +5,7 @@
 **A reproducible runbook for running a [Hermes Agent](https://hermes-agent.nousresearch.com)
 on Google Cloud — privately, EU-resident data, billed through your own project.**
 
-[![version](https://img.shields.io/badge/version-0.12.0-blue)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.14.0-blue)](CHANGELOG.md)
 [![Hermes](https://img.shields.io/badge/Hermes-v0.19.0-8A2BE2)](https://hermes-agent.nousresearch.com)
 [![data](https://img.shields.io/badge/data-europe--west2-green)](#eu-data-residency)
 [![inference](https://img.shields.io/badge/inference-vertex%20global-yellow)](#eu-data-residency)
@@ -38,7 +38,7 @@ YOUR PC                                GOOGLE CLOUD
 │   zero compute)      │  encrypted    │  │ SearXNG           :8080  localhost    │ │
 └──────────────────────┘               │  │ Honcho memory :8000 + Vertex shim :8900│ │
                                        │  └──────────────────────────────────────┘  │
-                                       │  Vertex AI · gemini-3.6-flash · global ⚠️  │
+                                       │  Vertex AI · gemini-3.7-flash · global ⚠️  │
                                        └────────────────────────────────────────────┘
 ```
 
@@ -95,7 +95,7 @@ Full walkthrough: **[gcp/vpc-install/INSTALL.md](gcp/vpc-install/INSTALL.md)**
 |---|---|---|
 | Host | GCE `e2-standard-4`, Ubuntu 26.04 LTS, 100 GB | Chrome + Postgres + SearXNG + Hermes need the headroom |
 | Network | Custom VPC, no external IP, Cloud NAT, IAP-only ingress | nothing to scan; access is IAM |
-| Model | Vertex AI `gemini-3.6-flash` (+ `3.5-flash`, `3.5-flash-lite`) @ `global` | the three latest flash models; ⚠️ `global` is not region-pinned |
+| Model | Vertex AI `gemini-3.7-flash` (+ `3.5-flash`) @ `global` | newest flash, plus the newest one that also serves from an EU region; ⚠️ `global` is not region-pinned |
 | Search | Self-hosted **SearXNG** | native Hermes backend, no API key, no hosted-SaaS query log |
 | Browser | Chrome + Playwright Chromium, headless | real browser automation on the VM |
 | Memory | Self-hosted **Honcho** (Postgres/pgvector) **on Vertex** | per-user memory modelling; **zero external API keys** via a local OpenAI-compat shim |
@@ -117,20 +117,25 @@ with one deliberate, owner-approved exception for **inference only**.
 | **Data at rest** — VM, subnet, GCS bucket, backups, SearXNG, Honcho | `europe-west2` | ✅ yes |
 | **Inference** — Vertex chat calls | `global` | ⚠️ **not region-pinned** |
 
-The reason is model availability. Probed directly against Vertex on **2026-07-28**
+The reason is model availability. Re-probed directly against Vertex on **2026-08-18**
 (`:generateContent` POST, HTTP status):
 
 | Model | eu-w1 | eu-w2 | eu-w3 | eu-w4 | eu-n1 | global |
 |---|---|---|---|---|---|---|
+| `gemini-3.7-flash` | 404 | 404 | 404 | 404 | 404 | **200** |
 | `gemini-3.6-flash` | 404 | 404 | 404 | 404 | 404 | **200** |
-| `gemini-3.5-flash` | 404 | **200** | — | 404 | — | **200** |
-| `gemini-3.5-flash-lite` | 404 | 404 | — | — | — | **200** |
-| `gemini-2.5-flash` | **200** | **200** | — | — | — | — |
+| `gemini-3.5-flash` | 404 | **200** | **200** | 404 | 404 | **200** |
+| `gemini-3.5-flash-lite` | 404 | 404 | 404 | 404 | 404 | **200** |
+| `gemini-2.5-flash` | **200** | **200** | **200** | **200** | **200** | **200** |
 
-**No European regional endpoint serves `gemini-3.6-flash` or `gemini-3.5-flash-lite`.**
-Running the three latest flash models therefore requires the `global` endpoint. That
-trade was made knowingly: infrastructure and all stored data stay in `europe-west2`,
-and only the inference call leaves a pinned region.
+**No European regional endpoint serves `gemini-3.7-flash`.** Running the newest flash
+model therefore requires the `global` endpoint. That trade was made knowingly:
+infrastructure and all stored data — including Honcho's embeddings, which use the
+regional `europe-west2` endpoint — stay in `europe-west2`, and only the chat inference
+call leaves a pinned region.
+
+`gemini-3.5-flash` **gained `europe-west3`** since the 2026-07-28 probe, so the
+strict-EU fallback is widening over time. This is exactly why the table carries a date.
 
 **To revert to strict regional-EU inference**, in `gcp/vpc-install/00-vars.sh`:
 
@@ -165,7 +170,7 @@ European region — and **re-probe** rather than trusting the table above.
 | [gcp/vpc-install/INSTALL.md](gcp/vpc-install/INSTALL.md) | Full guide — architecture, every command, security model, cost, design rationale. |
 | [gcp/vpc-install/OPS-NOTES.md](gcp/vpc-install/OPS-NOTES.md) | **Day-2 ops over SSH** — idle/wedged gateways, backend upgrades, service updates, symptom→cause table. |
 | [AGENTS.md](AGENTS.md) | Master runbook: architecture, canonical facts, and **lessons learned** (read before debugging anything). |
-| [CHANGELOG.md](CHANGELOG.md) | Version history. Currently **0.12.0**. |
+| [CHANGELOG.md](CHANGELOG.md) | Version history. Currently **0.14.0**. |
 
 **Variants and deeper topics** (from the earlier public-IP install — still the best
 reference for these subjects)

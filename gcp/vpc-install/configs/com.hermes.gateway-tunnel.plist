@@ -7,16 +7,21 @@
   automatically; reconnect after wake takes ~20-40s (launchd throttle +
   gcloud cold start), so give it a moment before the app reconnects.
 
-  Install:
-    cp com.hermes.gateway-tunnel.plist ~/Library/LaunchAgents/
-    # EDIT the two paths below first (see comments)
-    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.hermes.gateway-tunnel.plist
-    launchctl kickstart -k gui/$(id -u)/com.hermes.gateway-tunnel
+  Install — use the script, which fills in the placeholders below from 00-vars.sh
+  and `which gcloud`, removes any stale agent, and verifies the tunnel:
+
+    bash gcp/vpc-install/scripts/install-gateway-launchagent.sh
+
+  This file is a TEMPLATE: the placeholders are not valid launchd values, so do not
+  copy it into ~/Library/LaunchAgents/ by hand. Hand-editing was the old procedure and
+  it had two reliable failure modes: a bare "gcloud" (launchd reads no shell profile)
+  and a literal <you> left in HOME, which fails with a credentials error that looks
+  like an IAM problem.
 
   Manage:
     launchctl kickstart -k gui/$(id -u)/com.hermes.gateway-tunnel   # force reconnect
     launchctl bootout   gui/$(id -u)/com.hermes.gateway-tunnel      # stop + disable
-    tail -f ~/Library/Logs/hermes-gateway-tunnel.log
+    tail -f /tmp/hermes-gateway-tunnel.log
 -->
 <plist version="1.0">
 <dict>
@@ -25,16 +30,16 @@
 
   <key>ProgramArguments</key>
   <array>
-    <!-- EDIT: absolute path to gcloud. Find it with `which gcloud`.
-         launchd does not read your shell profile, so a bare "gcloud" fails. -->
-    <string>/opt/homebrew/bin/gcloud</string>
+    <!-- Absolute path: launchd does not read your shell profile, so a bare
+         "gcloud" fails. Filled in from `which gcloud`. -->
+    <string>__GCLOUD__</string>
     <string>compute</string>
     <string>start-iap-tunnel</string>
-    <string>hermes-agent</string>
-    <string>9119</string>
-    <string>--local-host-port=localhost:9119</string>
-    <string>--zone=europe-west2-b</string>
-    <string>--project=test-disco-cm</string>
+    <string>__VM_NAME__</string>
+    <string>__PORT__</string>
+    <string>--local-host-port=localhost:__PORT__</string>
+    <string>--zone=__ZONE__</string>
+    <string>--project=__PROJECT_ID__</string>
   </array>
 
   <key>RunAtLoad</key>
@@ -47,12 +52,12 @@
 
   <key>EnvironmentVariables</key>
   <dict>
-    <!-- EDIT: replace <you> with your macOS username. gcloud needs a sane PATH
-         and a HOME to find its ADC credentials. -->
+    <!-- launchd starts with almost no environment: gcloud needs a sane PATH, and HOME
+         to find the ADC credentials from `gcloud auth login`. -->
     <key>PATH</key>
-    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <string>__GCLOUD_DIR__:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     <key>HOME</key>
-    <string>/Users/&lt;you&gt;</string>
+    <string>__HOME__</string>
   </dict>
 
   <key>StandardOutPath</key>
