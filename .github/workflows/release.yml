@@ -1,0 +1,61 @@
+name: release
+
+# The Releases page is generated from CHANGELOG.md. When a commit lands on `main` whose
+# top changelog entry names a version that has no release yet, this tags it and publishes
+# the release with that entry as the notes. If the release already exists, its notes are
+# refreshed from the changelog — so correcting an entry corrects the release.
+#
+# Nothing here is manual: the version is claimed in the PR, the release follows the merge.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Publish the top changelog entry as a release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          version=$(python3 .github/scripts/changelog.py top)
+          tag="v$version"
+          python3 .github/scripts/changelog.py notes "$version" > /tmp/notes.md
+          echo "Top changelog entry: $version ($(wc -l < /tmp/notes.md) lines of notes)"
+
+          # Title: the merge commit's subject, minus the trailing "(#123)", when it already
+          # names this version — that is the convention here. Otherwise just the tag.
+          subject=$(git log -1 --pretty=%s "$SHA" | sed -E 's/ \(#[0-9]+\)$//')
+          case "$subject" in
+            "$tag"*|"$tag — "*) title="$subject" ;;
+            *) title="$tag" ;;
+          esac
+
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release edit "$tag" --notes-file /tmp/notes.md --title "$title"
+            echo "::notice::Refreshed the notes on the existing $tag release."
+            exit 0
+          fi
+
+          gh release create "$tag" \
+            --target "$SHA" \
+            --title "$title" \
+            --notes-file /tmp/notes.md
+          echo "::notice::Published $tag — $title"

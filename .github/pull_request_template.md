@@ -2,14 +2,16 @@
 
 <!-- One or two sentences. What does this change about the installable configuration? -->
 
-## Changelog
+## Changelog and version
 
-<!-- Required. Every PR into main must update CHANGELOG.md, or carry the
-     `skip-changelog` label. See the MAJOR/MINOR/PATCH rules at the top of
-     CHANGELOG.md. -->
+<!-- Required. Every PR claims a new version, and that entry becomes the notes of the
+     release published on merge. Write it for the Releases page. Title this PR
+     'vX.Y.Z — what changed'. Nothing to document? Add the `skip-changelog` label
+     instead — then no version and no release. -->
 
-- [ ] `CHANGELOG.md` updated (versioned entry, or a bullet under `## [Unreleased]`)
-- [ ] Version bumped if this changes the installable configuration
+- [ ] New `## [x.y.z] — YYYY-MM-DD` entry at the top of `CHANGELOG.md`, above `main`'s version
+- [ ] Version badge in `README.md` and the "Currently" line in `CLAUDE.md` bumped to match
+- [ ] MAJOR/MINOR/PATCH picked per the rules at the top of `CHANGELOG.md`
 - [ ] `AGENTS.md` / `README.md` / the install package kept in sync
 
 ## Verification

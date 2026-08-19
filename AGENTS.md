@@ -46,16 +46,29 @@ Corollaries:
 ## How changes land in this repo
 
 **`main` is protected — you cannot push to it.** Every change, including a one-line doc
-fix, goes through a pull request, and **every pull request must update `CHANGELOG.md`**.
-A required GitHub Actions check named `changelog` enforces this; the `skip-changelog`
-label is the only waiver, and it is for changes that document nothing (CI plumbing,
-typos).
+fix, goes through a pull request that **claims a new version**. On merge, that version is
+tagged and published as a GitHub release whose notes are your changelog entry — so write
+the entry for the [Releases page](https://github.com/Emerging-Tech-Visma/hermes-agent/releases),
+and **never tag or cut a release by hand**.
+
+The required `changelog` check fails a PR unless:
+
+1. it touches `CHANGELOG.md`;
+2. its top entry is a **new** version above the one on `main` (and not already tagged);
+3. `README.md`'s version badge and `CLAUDE.md`'s "Currently" line both say that version.
+
+The `skip-changelog` label is the only waiver — for changes that document nothing (CI
+plumbing, typos). A labelled PR ships no version and no release.
 
 ```bash
 git switch -c short-topic-branch
-# change + CHANGELOG.md entry in the same commit
-git push -u origin HEAD && gh pr create --fill
+# change + new '## [x.y.z]' CHANGELOG entry + badge bumps, in the same commit
+python3 .github/scripts/changelog.py top          # the version this PR will release
+git push -u origin HEAD && gh pr create --fill    # title it 'vX.Y.Z — what changed'
 ```
+
+If a concurrent session lands your version number first, the check tells you which
+version `main` reached — renumber and push again.
 
 Full rules, the ruleset's exact settings, and the release/tag procedure:
 **[CONTRIBUTING.md](CONTRIBUTING.md)**.

@@ -10,7 +10,15 @@ library, so the version tracks the **installable configuration** it describes.
   (different network model, different host, different client topology).
 - **MINOR** — a new install variant, a new service in the stack, or a changed
   default (model, region, provider).
-- **PATCH** — corrections, re-probed facts, doc fixes, script robustness.
+- **PATCH** — corrections, re-probed facts, doc fixes, script robustness, and
+  changes to how this repo itself is run (CI, contribution rules).
+
+**Every pull request claims a new version here**, and the entry becomes the notes of
+the matching [GitHub release](https://github.com/Emerging-Tech-Visma/hermes-agent/releases)
+— published automatically when the PR merges. A change that alters nothing installable
+is still a PATCH; a change that documents nothing at all carries the `skip-changelog`
+label instead and ships no release. This file is the single source of truth for the
+version: [CONTRIBUTING.md](CONTRIBUTING.md) has the mechanics.
 
 > **Verify, don't trust.** Every version here records facts that were true when
 > probed. Model availability, image families and pricing all move. Each entry
@@ -26,6 +34,37 @@ library, so the version tracks the **installable configuration** it describes.
   `HERMES_DASHBOARD_BASIC_AUTH_PASSWORD_HASH`.
 - Optional: `serpapi-mcp` as an *additional* MCP tool for true Google SERP data,
   alongside SearXNG rather than replacing it.
+
+---
+
+## [0.14.3] — 2026-08-19
+
+**Every PR now claims a version, and every version becomes a release automatically.**
+Governance only — no change to what gets installed.
+
+### Added
+
+- **`.github/workflows/release.yml`** — on every push to `main`, reads the top entry of
+  `CHANGELOG.md`, and if that version has no release yet, tags the merge commit and
+  publishes a GitHub release whose notes *are* that entry. If the release already exists,
+  its notes are refreshed from the changelog, so correcting an entry corrects the release.
+  Idempotent, so a re-run or a `skip-changelog` merge is a no-op.
+- **`.github/scripts/changelog.py`** — the parser both workflows share (`top`, `versions`,
+  `notes <x.y.z>`, `newer <a> <b>`). Runnable by hand to preview release notes:
+  `python3 .github/scripts/changelog.py notes 0.14.3`.
+- **Version-bump enforcement in the `changelog` check.** A PR must now (a) touch
+  `CHANGELOG.md`, (b) declare a version strictly above the one on `main` and not already
+  tagged, and (c) keep the version badge in `README.md` and the "Currently" line in
+  `CLAUDE.md` in step with it. If a concurrent PR lands your version first, the check
+  tells you which version `main` is now at so you can renumber.
+- **Releases backfilled** for `v0.13.0`, `v0.14.0`, `v0.14.1` and `v0.14.2` — those
+  versions had changelog entries but no tags and no releases, which also left every
+  compare link in this file pointing at a tag that did not exist.
+
+### Changed
+
+- The `skip-changelog` label now waives the version bump too — a labelled PR ships no
+  release, which is the point of it.
 
 ---
 
@@ -689,7 +728,8 @@ release; recorded so 0.10.0's changes have a baseline.
 
 ---
 
-[Unreleased]: https://github.com/Emerging-Tech-Visma/hermes-agent/compare/v0.14.2...HEAD
+[Unreleased]: https://github.com/Emerging-Tech-Visma/hermes-agent/compare/v0.14.3...HEAD
+[0.14.3]: https://github.com/Emerging-Tech-Visma/hermes-agent/compare/v0.14.2...v0.14.3
 [0.14.2]: https://github.com/Emerging-Tech-Visma/hermes-agent/compare/v0.14.1...v0.14.2
 [0.14.1]: https://github.com/Emerging-Tech-Visma/hermes-agent/compare/v0.14.0...v0.14.1
 [0.14.0]: https://github.com/Emerging-Tech-Visma/hermes-agent/compare/v0.13.0...v0.14.0
