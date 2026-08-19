@@ -93,7 +93,7 @@ install.**
 
 ## Canonical facts
 
-### Current install — v0.13.0, private VPC (rebuilt from scratch 2026-08-18)
+### Current install — v0.14.4, private VPC (rebuilt from scratch 2026-08-18, re-probed live 2026-08-19)
 
 The live install is the **[`gcp/vpc-install/`](gcp/vpc-install/)** package. The v1 table
 in the next subsection is **historical**.
@@ -116,8 +116,9 @@ it is DHCP-assigned per VM creation, so **do not treat it as a fixed fact**.
 | Gateway to client | `gcloud compute start-iap-tunnel … 9119` → desktop app / browser at `localhost:9119` | — |
 | Service account | `hermes-agent@test-disco-cm.iam.gserviceaccount.com` (`aiplatform.user`, `storage.objectAdmin`) | ✅ |
 | Chat model / Vertex region | `google/gemini-3.7-flash` (default) + `gemini-3.5-flash` / **`global`** — ⚠️ EU-residency exception, **inference only**; VM/bucket stay `europe-west2` | ✅ probed 200/200 on 2026-08-18 |
-| Web search | self-hosted **SearXNG**, Docker, `127.0.0.1:8080`, JSON API on | — |
-| Browser | Chrome + Playwright Chromium, headless | — |
+| Hermes Agent version | **v0.20.4** (`2026.8.18`), at `~/.local/bin/hermes` → `~/.hermes/hermes-agent`. ⚠️ `02-vm-install.sh` installs from upstream `install.sh` **unpinned** — every install gets whatever is current that day, exactly like Honcho below. The docs said v0.19.0 for three weeks after the box moved on. | ✅ probed 2026-08-19 |
+| Web search | self-hosted **SearXNG**, Docker, `127.0.0.1:8080`, JSON API on (containers `searxng` + `searxng-valkey`) | ✅ 2026-08-19 |
+| Browser | **Chrome 151.0.7922.169** + Playwright Chromium, headless | ✅ probed 2026-08-19 |
 | Memory | self-hosted Honcho, Docker, `127.0.0.1:8000`, LLM = **`google/gemini-2.5-flash`** via the Vertex shim on `:8900` (NOT a 3.x model — see below); embeddings `gemini-embedding-001` @ `europe-west2`, **1536 dims** | ✅ 2026-08-18 |
 | Honcho version | commit **`2163ab1`** (2026-08-18) — ⚠️ `02-vm-install.sh` does `git clone --depth 1` of Honcho `main`, which **pins nothing**. Every install gets whatever `main` is that day, so Honcho-specific facts here can go stale without anyone touching this repo. Record the SHA whenever you re-verify. | ✅ 2026-08-18 |
 | Dashboard | `:9119`, bound `0.0.0.0` (required for auth), basic-auth, IAP-tunnel-only | — |
