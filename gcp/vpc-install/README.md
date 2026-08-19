@@ -96,6 +96,18 @@ bash ~/hermes-install/03-verify.sh
 bash scripts/install-gateway-launchagent.sh
 ```
 
+### Changing the install? Start from a virgin one
+
+```bash
+bash scripts/teardown.sh        # deletes VM + network + SA (keeps the memory bucket)
+```
+
+Then run 1 → 4 above from zero. **This is a rule, not a suggestion**: a from-scratch
+rebuild on 2026-08-18 found five defects that re-running over a live VM had hidden for
+three versions, four of them install-blocking. A re-run proves the installer is
+*idempotent* — it proves nothing about whether it *installs*. Rule and evidence:
+[AGENTS.md](../../AGENTS.md).
+
 Two manual steps remain, both explained in [INSTALL.md](INSTALL.md):
 
 - **Connect the desktop app** — open the gateway tunnel, then sign in.

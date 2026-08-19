@@ -284,6 +284,14 @@ to `~/.hermes/.env` in step 6 of the installer.
 bash ~/hermes-install/03-verify.sh
 ```
 
+> ⚠️ **13/13 on an existing VM does not mean a fresh install works.** These checks
+> confirm a *running* system is healthy; they cannot see fresh-state defects (an apt key
+> written with the wrong mode, a script dying on an empty `.env`, a cold service that is
+> slower than a fixed `sleep`). Validate install changes from a **virgin** install —
+> `bash scripts/teardown.sh`, then 01 → 02 → 03 from zero. See the rule in
+> [AGENTS.md](../../AGENTS.md); it exists because five such bugs survived three versions
+> of "re-ran it, exit 0".
+
 Targets **13/13**: Hermes CLI, a real Vertex `:generateContent` call, EU residency,
 Chrome, Playwright, SearXNG JSON API, Honcho, dashboard service, linger.
 

@@ -8,6 +8,41 @@ and the lessons learned. Read this before running an install or debugging one.
 > Purpose: this is a **learning / reference project** — document *everything* so a
 > new installation can be reproduced without rediscovering the gotchas.
 
+## 🔴 RULE: validate from a VIRGIN installation, always
+
+**Never validate a change to the install by re-running the installer over an existing VM.**
+Tear the installation down and build it from zero. One command:
+
+```bash
+bash gcp/vpc-install/scripts/teardown.sh   # then 01 → 02 → 03 from scratch
+```
+
+**Why this is a rule and not a preference.** A from-scratch rebuild on 2026-08-18 found
+**five defects that an incremental re-run passes straight over**, because each one only
+exists in fresh state:
+
+| Defect | Why a re-run never sees it |
+|---|---|
+| Chrome apt keyring written mode 0600 | keyring already existed, already readable |
+| That failure made all later re-runs fail at step 1 | the poisoned `sources.list.d` was already repaired |
+| `gpg --dearmor -o` blocking on an overwrite prompt | needs the file to pre-exist in the *wrong* way |
+| `dashboard-setup.sh` dying silently under `errexit` | `.env` already contained the line its `grep` looks for |
+| `sleep 6` too short for a cold dashboard | the service was already warm |
+
+Four of those five were **install-blocking**. The install had been reported working for
+three prior versions with all five latent, because it had only ever been re-run over a
+live box. An incremental re-run tells you the installer is *idempotent*; it tells you
+nothing about whether it *installs*.
+
+Corollaries:
+
+- **A green `03-verify.sh` on an existing VM is not evidence a fresh install works.**
+- **Record what you validated against** — date, Hermes version, Honcho SHA. Three
+  dependencies are unpinned (`install.sh` via curl, `git clone --depth 1` of Honcho,
+  the Ubuntu image family), so "it worked" has a shelf life.
+- If a full teardown is genuinely not available, say so explicitly in the writeup and
+  name what therefore went unverified. Do not let "re-ran it, exit 0" stand in for it.
+
 ## What gets built
 
 ```
@@ -433,3 +468,6 @@ as default and stop the VM when idle.
   `gcp/configs/*.template` use `__PLACEHOLDER__` tokens filled at install time.
 - Keep this file and `gcp/` in sync when the install changes — this repo's whole
   point is faithful replication.
+- **Validate from a virgin installation** — `scripts/teardown.sh`, then 01 → 02 → 03 from
+  zero. Never sign off an install change on the strength of a re-run over a live VM. See
+  the rule at the top of this file for the five bugs that hid behind exactly that habit.
