@@ -37,6 +37,44 @@ version: [CONTRIBUTING.md](CONTRIBUTING.md) has the mechanics.
 
 ---
 
+## [0.14.4] — 2026-08-19
+
+**Re-probed the live install and corrected the front page.** The repo had been claiming
+Hermes v0.19.0 since 2026-07-28; the box has been on **v0.20.4** since the 2026-08-18
+rebuild. No change to what gets installed — this is the "verify, don't trust" rule
+applied to our own shop window.
+
+### Fixed
+
+- **Hermes version — `v0.19.0` → `v0.20.4` (`2026.8.18`)** in the README badge, and in
+  the "Verified against" lines of `gcp/vpc-install/README.md` and `INSTALL.md`. Those
+  lines now also say out loud that `02-vm-install.sh` installs Hermes **unpinned** from
+  upstream `install.sh`, so a fresh run gets whatever is current — re-probe
+  `hermes --version` rather than trusting the line. (`hermes` is not on the PATH of a
+  non-interactive SSH shell; it lives at `~/.local/bin/hermes`.)
+- **Model badge — `gemini-3.6-flash` → `gemini-3.7-flash`**, which has been the default
+  since 0.13.0. The live `~/.hermes/config.yaml` lists `gemini-3.7-flash` then
+  `gemini-3.5-flash` on `providers.vertex` @ `global`.
+- **Quick start said `03-verify.sh` "targets 9/9"** — it has been 13/13 since 0.13.0.
+- **`OPS-NOTES.md` still listed the internal IP as `10.10.0.2`** in the stop/start and
+  cost tables; the current VM is `10.10.0.3`, and the tables now say the address is
+  per-VM-creation rather than fixed.
+- **GitHub repo About** — description rewritten to the current stack and "verified
+  13/13", homepage set to the upstream Hermes project, topics extended with
+  `private-vpc`, `eu-data-residency`, `playwright`. It had advertised "9/9".
+
+### Added
+
+- **`Hermes Agent version` row in the `AGENTS.md` canonical-facts table.** There was a
+  Honcho version row but none for Hermes itself, which is exactly why the v0.19.0 claim
+  went unchallenged for three weeks. Same unpinned-install warning as Honcho carries.
+- Live probe stamped into the facts table (2026-08-19): **Chrome 151.0.7922.169**,
+  SearXNG (`searxng` + `searxng-valkey`) and Honcho (4 containers) up, `hermes-gateway`,
+  `hermes-dashboard` and `vertex-openai-proxy` all `active`, Ubuntu 26.04 LTS,
+  17 GB of 96 GB disk used.
+
+---
+
 ## [0.14.3] — 2026-08-19
 
 **Every PR now claims a version, and every version becomes a release automatically.**
@@ -728,7 +766,8 @@ release; recorded so 0.10.0's changes have a baseline.
 
 ---
 
-[Unreleased]: https://github.com/Emerging-Tech-Visma/hermes-agent/compare/v0.14.3...HEAD
+[Unreleased]: https://github.com/Emerging-Tech-Visma/hermes-agent/compare/v0.14.4...HEAD
+[0.14.4]: https://github.com/Emerging-Tech-Visma/hermes-agent/compare/v0.14.3...v0.14.4
 [0.14.3]: https://github.com/Emerging-Tech-Visma/hermes-agent/compare/v0.14.2...v0.14.3
 [0.14.2]: https://github.com/Emerging-Tech-Visma/hermes-agent/compare/v0.14.1...v0.14.2
 [0.14.1]: https://github.com/Emerging-Tech-Visma/hermes-agent/compare/v0.14.0...v0.14.1

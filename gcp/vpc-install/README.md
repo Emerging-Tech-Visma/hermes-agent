@@ -32,7 +32,9 @@ Desktop app / browser  ──IAP tunnel──►  GCE VM (no public IP, private 
 | Auth | one attached service account — **no key files anywhere** |
 | Cost | ~$235–365/month at moderate daily team use |
 
-Verified against **Hermes Agent v0.19.0**, GCP as of **2026-07-28**.
+Verified against **Hermes Agent v0.20.4** (`2026.8.18`), GCP as of **2026-08-19**.
+The installer pulls Hermes **unpinned** from upstream `install.sh`, so a fresh run gets
+whatever is current — re-probe `hermes --version` rather than trusting this line.
 
 > **Status: REBUILT FROM SCRATCH on `test-disco-cm`, 2026-08-18 — `03-verify.sh` 13/13.**
 > The project was empty (0 instances) beforehand, so this is a true from-zero run of both

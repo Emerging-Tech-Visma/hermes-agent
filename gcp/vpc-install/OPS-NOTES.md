@@ -641,7 +641,7 @@ gcloud compute instances stop hermes-agent --zone=europe-west2-b
 | VM (vCPU/RAM) | **stops billing** |
 | 100 GB boot disk | **keeps billing** (~$11/mo) |
 | Cloud NAT gateway | **keeps billing** (~$35–45/mo) — it is not tied to the VM |
-| Static internal IP `10.10.0.2` | free, and **persists** |
+| Static internal IP (`10.10.0.3` today) | free, and **persists** across stop/start |
 
 > So stopping saves roughly the compute only. If you are pausing for weeks, delete the
 > NAT gateway too — and remember to recreate it before starting, or `apt`, Docker Hub
@@ -665,7 +665,7 @@ gcloud compute instances stop hermes-agent --zone=europe-west2-b
 | `memory-backup.timer` | ✅ | timer, `enabled`, `Persistent=true` catches missed runs |
 | Honcho (4 containers) | ✅ | `restart: unless-stopped` + docker `enabled` at boot |
 | SearXNG + Valkey | ✅ | `restart: unless-stopped` |
-| Internal IP `10.10.0.2` | ✅ | stays assigned to the instance |
+| Internal IP (`10.10.0.3` today) | ✅ | stays assigned to the instance; reassigned only on VM re-create |
 | **Your IAP tunnel** | ❌ | **client-side — you must re-open it** |
 | Dashboard session | ❌ | 12 h TTL; sign in again |
 

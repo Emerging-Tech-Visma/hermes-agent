@@ -11,7 +11,9 @@ on Google Cloud, where:
 - Ask the agent to create a file or folder and **it is created on the VM**, because the
   agent's terminal backend is local *to the VM*.
 
-Verified against **Hermes Agent v0.19.0** and GCP as of **2026-07-28**.
+Verified against **Hermes Agent v0.20.4** (`2026.8.18`), GCP as of **2026-08-19**.
+The installer pulls Hermes **unpinned** from upstream `install.sh`, so a fresh run gets
+whatever is current — re-probe `hermes --version` rather than trusting this line.
 
 ---
 
