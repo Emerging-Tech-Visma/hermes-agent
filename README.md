@@ -9,7 +9,7 @@ Live install probed **2026-08-19**: Hermes **v0.20.4**, Ubuntu 26.04 LTS, Chrome
 Vertex **`gemini-3.7-flash`** @ `global` (+ `gemini-3.5-flash`), SearXNG and Honcho up,
 no external IP.
 
-[![version](https://img.shields.io/badge/version-0.16.0-blue)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.16.1-blue)](CHANGELOG.md)
 [![Hermes](https://img.shields.io/badge/Hermes-v0.20.4-8A2BE2)](https://hermes-agent.nousresearch.com)
 [![data](https://img.shields.io/badge/data-europe--west2-green)](#eu-data-residency)
 [![inference](https://img.shields.io/badge/inference-vertex%20global-yellow)](#eu-data-residency)
