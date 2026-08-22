@@ -37,6 +37,23 @@ version: [CONTRIBUTING.md](CONTRIBUTING.md) has the mechanics.
 
 ---
 
+## [0.16.1] — 2026-08-22
+
+### Fixed
+
+- **`hermesctl` failed for every invocation via the PATH** — i.e. the only way anyone
+  actually runs it. `install-hermesctl.sh` symlinks it into `~/.local/bin`, and the script
+  located `00-vars.sh` with `dirname "${BASH_SOURCE[0]}"`, which resolves to the
+  *symlink's* directory. So it looked for `~/.local/bin/../00-vars.sh` and exited with
+  "cannot find 00-vars.sh". It only worked when run by its full path inside the repo,
+  which is how it was tested. Now walks the symlink chain by hand — not `readlink -f`,
+  which is GNU-only on older macOS.
+
+  *Testing lesson: exercising a script from its source directory does not test the way
+  users invoke it.*
+
+---
+
 ## [0.16.0] — 2026-08-22
 
 Adds **`hermesctl`** — one command for every routine operation, so day-to-day running of

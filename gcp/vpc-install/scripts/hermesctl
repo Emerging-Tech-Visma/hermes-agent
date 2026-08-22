@@ -15,7 +15,20 @@
 set -uo pipefail
 
 # Settings come from 00-vars.sh so a cloned install works with no edits here.
-SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+#
+# Resolve symlinks first. install-hermesctl.sh links this into ~/.local/bin, and a
+# plain `dirname "${BASH_SOURCE[0]}"` would then point at ~/.local/bin — where there
+# is no 00-vars.sh — so every invocation via the PATH failed with "cannot find
+# 00-vars.sh". Walk the symlink chain by hand rather than using `readlink -f`, which
+# is GNU-only on older macOS.
+_src="${BASH_SOURCE[0]}"
+while [ -L "${_src}" ]; do
+  _dir="$(cd -P "$(dirname "${_src}")" && pwd)"
+  _src="$(readlink "${_src}")"
+  # a relative link is relative to the directory holding the link
+  case "${_src}" in /*) ;; *) _src="${_dir}/${_src}" ;; esac
+done
+SELF="$(cd -P "$(dirname "${_src}")" && pwd)"
 VARS="${SELF}/../00-vars.sh"
 if [ -f "${VARS}" ]; then
   # shellcheck disable=SC1090
