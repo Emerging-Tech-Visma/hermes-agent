@@ -167,6 +167,8 @@ scripts/
   dashboard-setup.sh          idempotent dashboard basic-auth (run on the VM)
   memory-backup.sh            ~/.hermes → GCS rsync (hourly timer)
   hermes-autoupdate.sh        weekly `hermes update` (run by the timer, not by hand)
+  hermesctl                   ONE COMMAND for every routine op — run on your PC
+  install-hermesctl.sh        puts hermesctl on your PATH
   vertex-openai-proxy.py      OpenAI-compat shim in front of Vertex (for Honcho)
   gateway-tunnel.sh           open the secure gateway (run on your PC)
 

@@ -37,6 +37,59 @@ version: [CONTRIBUTING.md](CONTRIBUTING.md) has the mechanics.
 
 ---
 
+## [0.16.0] — 2026-08-22
+
+Adds **`hermesctl`** — one command for every routine operation, so day-to-day running of
+the agent no longer means remembering `gcloud compute ssh --tunnel-through-iap` strings.
+
+### Added
+
+- **`scripts/hermesctl`** (run on your PC) and **`scripts/install-hermesctl.sh`** to put
+  it on your PATH. It reads `00-vars.sh`, so a cloned install works with no edits.
+  - **health** — `status` (the 14-point check), `doctor`,
+    `logs gateway|dashboard|shim|autoupdate|honcho|searxng`
+  - **updates** — `update` (server now), `update-desktop` (this Mac), `update-all`,
+    `update-check`, `autoupdate [show|off|on]`
+  - **services** — `gateway status|start|stop|restart|kick`, `dashboard restart`,
+    `restart-all`
+  - **access** — `tunnel`, `open`, `ssh`
+  - **machine** — `vm status|start|stop`, `disk`
+- **README "Everyday commands"** section covering the whole surface, and the split
+  between updating the server (automatic, weekly) and the desktop app (manual, because it
+  has no auto-update feed).
+
+### Design notes
+
+- **`hermesctl update` runs the autoupdate *unit*, not `hermes update` directly.** That
+  way a manual update gets the same cgroup isolation, dashboard restart and post-update
+  verification as the Sunday run — rather than being a second, subtly different code path
+  that could reintroduce the "updater killed by the restart it triggered" bug (0.15.0).
+- **`gateway kick` exists because `restart` cannot fix a wedged gateway.** systemd only
+  restarts a process that *exits*; a gateway hung on a stalled tool call stays `active`
+  forever. `kick` stops it, clears stale `gateway.lock`/`gateway.pid`, and starts clean.
+- **`vm stop` confirms before acting** and says what it costs: stopping halts the agent,
+  cron and the weekly update, while the disk and Cloud NAT keep billing.
+- **Transient `exit 255` from `gcloud compute ssh` is retried** up to 3 times. Every
+  wrapped command is idempotent, so a retry is always safe.
+- **`restart-all` restarts the Vertex shim first**, because Honcho's first memory call
+  fails if the shim is not up.
+
+### Fixed
+
+- **`update-check` reported the hint instead of the answer.** `hermes update --check`
+  prints its verdict and then `Run 'hermes update' to install.`; taking the last line
+  showed that instruction even when the install was already current. Now picks the line
+  that actually says `N commits behind` or `up to date`.
+
+### Verified
+
+Every command exercised against the live VM: `vm status` → `RUNNING`; `autoupdate` →
+timer armed for `Sun 2026-08-23 04:09:15 UTC`, `last ok 2026-08-22T09:43:02Z`, no
+failures; `gateway status` → active, 13 min uptime; `open` → tunnel up; `update-check` →
+`9 commits behind origin/main` on both server and Mac.
+
+---
+
 ## [0.15.0] — 2026-08-22
 
 Adds **automated weekly backend updates** via a systemd timer, and documents the

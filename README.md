@@ -9,7 +9,7 @@ Live install probed **2026-08-19**: Hermes **v0.20.4**, Ubuntu 26.04 LTS, Chrome
 Vertex **`gemini-3.7-flash`** @ `global` (+ `gemini-3.5-flash`), SearXNG and Honcho up,
 no external IP.
 
-[![version](https://img.shields.io/badge/version-0.15.0-blue)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.16.0-blue)](CHANGELOG.md)
 [![Hermes](https://img.shields.io/badge/Hermes-v0.20.4-8A2BE2)](https://hermes-agent.nousresearch.com)
 [![data](https://img.shields.io/badge/data-europe--west2-green)](#eu-data-residency)
 [![inference](https://img.shields.io/badge/inference-vertex%20global-yellow)](#eu-data-residency)
@@ -91,6 +91,69 @@ Desktop app → **Settings → Gateway → Remote gateway** → `http://localhos
 just open <http://localhost:9119> in a browser.
 
 Full walkthrough: **[gcp/vpc-install/INSTALL.md](gcp/vpc-install/INSTALL.md)**
+
+---
+
+## Everyday commands — `hermesctl`
+
+One script wraps every routine operation, so you never have to remember a `gcloud`
+incantation. Install it once, on your PC:
+
+```bash
+bash gcp/vpc-install/scripts/install-hermesctl.sh
+```
+
+Then:
+
+```bash
+hermesctl status            # is everything healthy?  (the 14-point check)
+hermesctl update-all        # update the server AND the desktop app
+hermesctl gateway restart   # the one you'll reach for most
+hermesctl help              # everything else
+```
+
+### Updating
+
+The server **updates itself every Sunday** (04:00 UTC + a random delay), so normally you
+do nothing. These are for when you want to move sooner, or check:
+
+| Command | What it does |
+|---|---|
+| `hermesctl update-check` | Is a newer version out? Changes nothing. |
+| `hermesctl update` | Update the **server** now, without waiting for Sunday. |
+| `hermesctl update-desktop` | Update the **desktop app** on your Mac and relaunch it. |
+| `hermesctl update-all` | Both, server first. |
+| `hermesctl autoupdate` | Show the weekly schedule and the last result. |
+| `hermesctl autoupdate off` / `on` | Turn the weekly automatic update off or back on. |
+
+> **The server and the desktop app update separately, and that is not a bug.** The app is
+> built from its own checkout and ships **no auto-update feed**, so nothing on the VM can
+> update it — `hermesctl update-desktop` is the supported path. It matters far less than
+> it sounds: the app is a thin client, and all the compute, tools and memory live on the
+> server. Version skew is normally harmless.
+>
+> `hermesctl update` deliberately runs the **autoupdate unit** rather than `hermes update`
+> directly, so it gets the same cgroup isolation, dashboard restart and post-update
+> verification as the scheduled run. See [OPS-NOTES.md §11](gcp/vpc-install/OPS-NOTES.md)
+> for why that isolation is load-bearing.
+
+### Services, access, machine
+
+| Command | What it does |
+|---|---|
+| `hermesctl gateway status\|start\|stop\|restart` | The gateway runs cron jobs and messaging. |
+| `hermesctl gateway kick` | Force-recover a gateway that is "running" but doing nothing — clears stale locks and starts clean. `restart` alone cannot fix that state. |
+| `hermesctl dashboard restart` | Restart the endpoint your app connects to. |
+| `hermesctl restart-all` | Restart everything, in the order that works (shim before Honcho). |
+| `hermesctl logs gateway\|dashboard\|shim\|autoupdate\|honcho\|searxng` | Recent logs for one component. |
+| `hermesctl tunnel` | Open the secure gateway tunnel. |
+| `hermesctl open` | Open the dashboard in your browser (tells you if the tunnel is down). |
+| `hermesctl ssh` | Shell on the server. |
+| `hermesctl vm status\|start\|stop` | `stop` warns first — it halts the agent, cron and the weekly update, and the disk plus Cloud NAT keep billing. |
+| `hermesctl disk` | Disk usage, and reclaim space. |
+
+Every server-side command goes over the IAP tunnel (the VM has no public IP) and retries
+the transient `exit 255` that `gcloud compute ssh` occasionally throws.
 
 ---
 

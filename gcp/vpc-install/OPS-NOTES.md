@@ -17,6 +17,13 @@ gcloud compute ssh hermes-agent --zone=europe-west2-b --tunnel-through-iap \
   --command='systemctl --user status hermes-gateway.service'
 ```
 
+**Or skip the typing entirely.** `scripts/hermesctl` wraps every command in this
+document — `hermesctl status`, `hermesctl gateway kick`, `hermesctl update-all`,
+`hermesctl logs autoupdate`, … Install it with
+`bash scripts/install-hermesctl.sh`, then `hermesctl help`. The raw commands below
+remain the reference for what it actually runs, and for when you want to do something it
+does not cover.
+
 Put this in your shell profile to save typing:
 
 ```bash
