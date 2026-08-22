@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run ON THE VM. End-to-end health check — targets 13/13 pass.
+# Run ON THE VM. End-to-end health check — targets 14/14 pass.
 set -uo pipefail
 source "$(dirname "$0")/00-vars.sh"
 export PATH="${HOME}/.local/bin:${PATH}"
@@ -11,8 +11,10 @@ bad()  { echo "  FAIL  $1"; FAIL=$((FAIL+1)); }
 echo "=== Hermes on GCP — verification ==========================="
 
 # 1. Hermes CLI
-if hermes version >/dev/null 2>&1; then
-  ok "hermes CLI ($(hermes version 2>/dev/null | head -1))"
+# `hermes version` is gone in v0.20.5+ ("invalid choice: 'version'"); --version is the
+# supported form. Keep the old one as a fallback for older pinned installs.
+if hermes --version >/dev/null 2>&1 || hermes version >/dev/null 2>&1; then
+  ok "hermes CLI ($( { hermes --version 2>/dev/null || hermes version 2>/dev/null; } | head -1))"
 else
   bad "hermes CLI not on PATH"
 fi
@@ -256,6 +258,29 @@ if [ "${MEMORY_PROVIDER}" = "honcho" ]; then
   fi
 else
   ok "Honcho end-to-end not applicable (provider=${MEMORY_PROVIDER})"
+fi
+
+# 14. Weekly autoupdate timer. A timer that loads but never fires is
+# indistinguishable from "updates are working", so assert NextElapse exists
+# rather than just that the unit is enabled.
+if [ "${AUTOUPDATE_ENABLE:-false}" = "true" ]; then
+  if systemctl --user is-active hermes-autoupdate.timer >/dev/null 2>&1; then
+    NEXT="$(systemctl --user show hermes-autoupdate.timer -p NextElapseUSecRealtime --value 2>/dev/null)"
+    if [ -n "${NEXT}" ] && [ "${NEXT}" != "0" ] && [ "${NEXT}" != "n/a" ]; then
+      WHEN="$(systemctl --user list-timers hermes-autoupdate.timer --no-pager 2>/dev/null | sed -n '2p' | awk '{print $1, $2, $3}')"
+      ok "autoupdate timer armed (${AUTOUPDATE_MODE:-apply} mode, next ${WHEN:-scheduled})"
+    else
+      bad "hermes-autoupdate.timer is active but has NO next elapse — check AUTOUPDATE_SCHEDULE with: systemd-analyze calendar '${AUTOUPDATE_SCHEDULE:-}'"
+    fi
+  else
+    bad "hermes-autoupdate.timer not active — run: systemctl --user enable --now hermes-autoupdate.timer"
+  fi
+  # Surface a previous failed run rather than letting it rot silently.
+  if [ -f "${HOME}/.hermes/autoupdate/last-failure" ]; then
+    bad "a previous autoupdate FAILED at $(cat "${HOME}/.hermes/autoupdate/last-failure") — journalctl --user -u hermes-autoupdate"
+  fi
+else
+  ok "autoupdate not requested (AUTOUPDATE_ENABLE=${AUTOUPDATE_ENABLE:-false})"
 fi
 
 echo "==========================================================="

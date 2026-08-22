@@ -1,0 +1,15 @@
+[Unit]
+Description=Weekly Hermes backend update
+
+[Timer]
+# Sunday, early UTC — quiet window for a team-facing agent.
+OnCalendar=__AUTOUPDATE_SCHEDULE__
+# If the VM was stopped when the timer was due, run once after it comes back
+# rather than silently skipping a whole week.
+Persistent=true
+# Avoid every cloned install hitting upstream at the same instant.
+RandomizedDelaySec=30m
+Unit=hermes-autoupdate.service
+
+[Install]
+WantedBy=timers.target

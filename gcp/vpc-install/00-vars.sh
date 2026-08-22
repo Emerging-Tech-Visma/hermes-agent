@@ -205,3 +205,26 @@ export DASHBOARD_USERNAME="kennet"
 # bot need this running. See OPS-NOTES.md §2 for idle-gateway recovery.
 export GATEWAY_ENABLE="true"
 export HERMES_AGENT_TIMEOUT="1800"    # gateway idle timeout, seconds (Hermes default)
+
+# ---------------------------------------------------------------------------
+# Weekly unattended backend updates
+# ---------------------------------------------------------------------------
+# Runs `hermes update` from a systemd TIMER, not from a `hermes cron` job and not
+# from the desktop app. That distinction is load-bearing, not stylistic:
+# `hermes update` restarts hermes-gateway.service, and the gateway unit uses
+# KillMode=mixed + an ExecStopPost cgroup cleanup — so an updater launched from
+# inside the gateway (a hermes cron job, or a dashboard/desktop-app action) is
+# reaped mid-run when the gateway goes down. A timer unit has its own cgroup and
+# is unaffected. See scripts/hermes-autoupdate.sh for the full reasoning.
+export AUTOUPDATE_ENABLE="true"
+# "apply" = install updates. "check" = only report that one is available
+# (writes ~/.hermes/autoupdate/pending, changes nothing). Use "check" if you
+# want a human in the loop for a production agent.
+export AUTOUPDATE_MODE="apply"
+# systemd OnCalendar expression. `systemd-analyze calendar '<expr>'` validates it
+# and prints the next elapse. A 30m randomised delay is added by the timer.
+export AUTOUPDATE_SCHEDULE="Sun *-*-* 04:00:00 UTC"
+
+# NOTE: this updates the BACKEND ON THIS VM only. The desktop app on your PC is
+# built from its own checkout and has no auto-update feed — updating it is a
+# two-command job on the Mac. See OPS-NOTES.md §11.

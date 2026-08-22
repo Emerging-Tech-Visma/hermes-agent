@@ -1,0 +1,27 @@
+[Unit]
+# Weekly unattended update of the Hermes backend.
+#
+# This is a SEPARATE unit on purpose. `hermes update` restarts
+# hermes-gateway.service, and the gateway unit uses KillMode=mixed plus an
+# ExecStopPost cgroup cleanup — so anything running inside the gateway's cgroup
+# is reaped when the gateway restarts. That is why an update launched from a
+# `hermes cron` job or from the desktop app/dashboard gets killed mid-run: the
+# updater is a child of the very service it restarts. A timer-driven unit has
+# its own cgroup and survives.
+Description=Weekly Hermes backend update (check, update, restart dashboard, verify)
+Documentation=file://__HOME__/hermes-install/OPS-NOTES.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Environment=HOME=__HOME__
+Environment=HERMES_HOME=__HOME__/.hermes
+Environment=PATH=__HOME__/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=AUTOUPDATE_MODE=__AUTOUPDATE_MODE__
+WorkingDirectory=__HOME__
+ExecStart=__HOME__/.local/bin/hermes-autoupdate.sh
+# A git pull + dependency reinstall + verification can legitimately take a while.
+TimeoutStartSec=3600
+# Do NOT set Restart= — a oneshot that failed should stay failed and visible in
+# `systemctl --user list-units --failed`, not loop and re-break the install.

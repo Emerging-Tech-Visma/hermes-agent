@@ -37,6 +37,103 @@ version: [CONTRIBUTING.md](CONTRIBUTING.md) has the mechanics.
 
 ---
 
+## [0.15.0] — 2026-08-22
+
+Adds **automated weekly backend updates** via a systemd timer, and documents the
+update path for the desktop app — which is a separate, manual job.
+
+### Added
+
+- **`scripts/hermes-autoupdate.sh` + `hermes-autoupdate.{service,timer}`** — weekly
+  unattended `hermes update` on the VM, Sunday 04:00 UTC with a 30-minute randomised
+  delay. Each run: `--check` (exits quietly when there is nothing to do) → `hermes
+  update --yes` (keeping Hermes' own pre-update backup) → **restart the dashboard** →
+  `03-verify.sh`, failing loudly if the new code does not pass. State markers in
+  `~/.hermes/autoupdate/`.
+- **`AUTOUPDATE_ENABLE` / `AUTOUPDATE_MODE` / `AUTOUPDATE_SCHEDULE`** in `00-vars.sh`.
+  `AUTOUPDATE_MODE=check` reports without installing, for a human-in-the-loop
+  production agent.
+- **`03-verify.sh` check 14** — asserts the timer is not just *enabled* but has a real
+  `NextElapse`, because a timer with a malformed `OnCalendar` loads happily and then
+  never fires, which is indistinguishable from "updates are working". Also fails if
+  `~/.hermes/autoupdate/last-failure` exists, so a broken update cannot rot silently.
+  **Verification target is now 14/14.**
+- **`OPS-NOTES.md` §11** — the full update story: automated backend, why a timer rather
+  than `hermes cron`, the manual desktop-app path, how to make it check-only or turn it
+  off, and recovery when an unattended update breaks the install.
+
+### Why a systemd timer and not `hermes cron`
+
+Established by reading v0.20.5 on the live VM, not inferred:
+
+- `hermes update --plan` reports exactly one service to restart —
+  `gateway [default] … systemd`, `restart: systemctl restart`.
+- A `hermes cron` job executes **inside that gateway process**, and the gateway unit sets
+  `KillMode=mixed` plus an `ExecStopPost` cgroup cleanup. So an update scheduled as a
+  cron job is reaped by the restart it triggers — it destroys its own runtime mid-run.
+- The same trap catches updates launched from the **desktop app or dashboard**: the
+  spawned updater is a child of the gateway. This is the real cause of in-app updates
+  reporting failure.
+- A timer unit has its own cgroup and is unaffected. No Hermes code change and no
+  `systemd-run --scope` wrapper needed — the isolation is free once the updater is not
+  launched from the service being restarted.
+
+### Fixed
+
+- **INSTALL-BLOCKING: `02-vm-install.sh` died at step 3 on every current Hermes.** It
+  called `hermes version`, which was **removed as a subcommand** — v0.20.5 answers
+  `hermes: error: argument command: invalid choice: 'version'` and only accepts
+  `--version`. Because that call is guarded by `|| { …; exit 1; }`, the installer aborted
+  with "ERROR: hermes not on PATH after install" on a perfectly good install, and no
+  amount of re-running helped. Found by applying this release to the live VM — a fresh
+  clone today would have hit it immediately. Now tries `--version` first and falls back to
+  the old subcommand for older pinned installs. `03-verify.sh` check 1 and the
+  `OPS-NOTES.md` snippets had the same stale form and are fixed too.
+- **`hermes update` leaves the dashboard on pre-update code.** `--plan` restarts only the
+  gateway; this install also runs `hermes-dashboard.service`, the endpoint the desktop app
+  and browser actually connect to, which the updater knows nothing about. The autoupdate
+  script now restarts it explicitly, and the manual path in §3 says to do the same. Symptom
+  this removes: "I updated Hermes but the UI is unchanged."
+
+### Corrected — three claims that do not survive checking
+
+Recorded because they are plausible, circulate as advice, and are wrong:
+
+| Claim | Reality (v0.20.5 source) |
+|---|---|
+| "The gateway drain defaults to 1800s, so set `agent.restart_drain_timeout: 5` to speed restarts up." | `restart_drain_timeout` **defaults to 0 — no drain at all**; a restart interrupts in-flight agents immediately. Setting `5` *increases* the wait. The 1800 figure is `HERMES_AGENT_TIMEOUT`, the **idle-agent** timeout, unrelated to restart drain. The only real drain is `cron_drain_timeout` (default 30s). **No config change applied.** |
+| "`hermes cron create --schedule '0 4 * * 1' --prompt '…'`" | `hermes cron create` takes **positional** `schedule [prompt]`; there are no `--schedule` / `--prompt` flags. The command as written fails. (And see above for why cron is the wrong mechanism regardless.) |
+| "`_spawn_hermes_action` lives in `hermes_cli/web_server.py`." | It lives in `hermes_cli/web_routers/{profiles,tools}.py`. The underlying cgroup diagnosis is sound; the file reference is not. |
+
+The upstream `systemd-run --user --scope` code fix remains a reasonable idea for the
+in-app path, but this install does not need it — the timer sidesteps the problem.
+
+### Verified
+
+**The whole path was exercised on the live VM, not just installed.** `02-vm-install.sh`
+re-run to exit 0; timer armed for `Sun 2026-08-23 04:25:21 UTC`; then
+`systemctl --user start hermes-autoupdate.service` — the same unit the timer fires — was
+run against a VM that was genuinely 3 commits behind:
+
+| | |
+|---|---|
+| Unit result | `Result=success`, `ExecMainStatus=0` |
+| Version moved | `upstream 209e2ebd (+1 carried commit)` → `upstream 8e475ed2` |
+| Markers | `last-success` only — no `last-failure` |
+| Restart order | gateway `09:42:35` → dashboard `09:42:42` |
+| `03-verify.sh` | **14/14**, including the new check 14 |
+
+That restart order is the proof the design works: the updater restarted the gateway,
+**survived it** (a cron- or dashboard-launched updater would have been reaped there), and
+then restarted the dashboard.
+
+`hermes update --plan` and `--check` were also run read-only beforehand. Desktop side: `/Applications/Hermes.app` carries **no
+`app-update.yml`**, so there is no electron auto-update feed; `hermes desktop` is
+documented as *"Build and launch the native desktop app"*, confirming the app is built
+from its own checkout and cannot be updated by a VM-side timer.
+
+---
+
 ## [0.14.4] — 2026-08-19
 
 **Re-probed the live install and corrected the front page.** The repo had been claiming
