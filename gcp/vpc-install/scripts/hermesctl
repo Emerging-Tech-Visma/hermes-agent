@@ -1,0 +1,279 @@
+#!/usr/bin/env bash
+# hermesctl — one command for every routine Hermes operation.
+#
+# Run this ON YOUR PC. It wraps the gcloud/systemd incantations so you never have
+# to remember them. Every VM-side action goes over the IAP tunnel, because the VM
+# has no public IP.
+#
+#   hermesctl status            # is everything healthy? (the 14-point check)
+#   hermesctl update-all        # update the server AND the desktop app
+#   hermesctl gateway restart   # the thing you'll need most often
+#   hermesctl help              # full list
+#
+# Install it on your PATH:
+#   ln -sf "$PWD/gcp/vpc-install/scripts/hermesctl" ~/.local/bin/hermesctl
+set -uo pipefail
+
+# Settings come from 00-vars.sh so a cloned install works with no edits here.
+SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+VARS="${SELF}/../00-vars.sh"
+if [ -f "${VARS}" ]; then
+  # shellcheck disable=SC1090
+  source "${VARS}"
+else
+  echo "hermesctl: cannot find 00-vars.sh next to this script (looked in ${VARS})" >&2
+  exit 1
+fi
+
+VM="${VM_NAME:?}"; ZONE="${ZONE:?}"; PROJ="${PROJECT_ID:?}"
+PORT="${DASHBOARD_PORT:-9119}"
+
+c_ok()   { printf '\033[32m%s\033[0m\n' "$*"; }
+c_warn() { printf '\033[33m%s\033[0m\n' "$*"; }
+c_err()  { printf '\033[31m%s\033[0m\n' "$*" >&2; }
+head1()  { printf '\n\033[1m%s\033[0m\n' "$*"; }
+
+# `gcloud compute ssh` intermittently exits 255 on a transient tunnel failure.
+# Every command here is idempotent, so retrying is always safe.
+vm() {
+  local tries=0
+  while :; do
+    gcloud compute ssh "${VM}" --zone="${ZONE}" --project="${PROJ}" \
+      --tunnel-through-iap --quiet --command="$1" 2>&1 \
+      | grep -vE 'NumPy|cloud\.google\.com/iap|^WARNING: $|^$|Recommendation:|--troubleshoot'
+    local rc=${PIPESTATUS[0]}
+    [ "${rc}" -ne 255 ] && return "${rc}"
+    tries=$((tries+1))
+    [ "${tries}" -ge 3 ] && { c_err "ssh failed 3x (exit 255)"; return 255; }
+    c_warn "  transient ssh failure, retrying (${tries}/3)..."
+    sleep 4
+  done
+}
+
+need_hermes_local() {
+  export PATH="${HOME}/.local/bin:${PATH}"
+  command -v hermes >/dev/null 2>&1 || {
+    c_err "hermes CLI not found on this machine (~/.local/bin/hermes)"; return 1; }
+}
+
+usage() {
+  cat <<'EOF'
+hermesctl — routine Hermes operations. Run on your PC.
+
+  HEALTH
+    status              full 14-point health check on the server
+    doctor              Hermes' own diagnostics
+    logs [what]         recent logs: gateway | dashboard | shim | autoupdate | honcho | searxng
+
+  UPDATES
+    update              update the SERVER now (does not wait for Sunday)
+    update-desktop      update the DESKTOP APP on this Mac, then relaunch it
+    update-all          both of the above, server first
+    update-check        is an update available? (changes nothing)
+    autoupdate          show the weekly schedule and last result
+    autoupdate off|on   disable / enable the weekly automatic update
+
+  SERVICES  (on the server)
+    gateway status|start|stop|restart
+    gateway kick        force-recover a stuck gateway (clears stale locks)
+    dashboard restart   restart the thing your app connects to
+    restart-all         restart every service in the right order
+
+  ACCESS
+    tunnel              open the secure gateway tunnel (foreground, Ctrl-C to stop)
+    open                open the dashboard in your browser
+    ssh                 shell on the server
+
+  MACHINE
+    vm status|start|stop
+    disk                disk usage, and reclaim space
+
+  help                  this text
+EOF
+}
+
+cmd_status() {
+  head1 "Server health"
+  vm 'bash ~/hermes-install/03-verify.sh'
+}
+
+cmd_doctor() { head1 "hermes doctor"; vm 'export PATH=$HOME/.local/bin:$PATH; hermes doctor 2>&1 | tail -30'; }
+
+cmd_logs() {
+  case "${1:-gateway}" in
+    gateway)    vm 'sudo journalctl _SYSTEMD_USER_UNIT=hermes-gateway --no-pager -n 60' ;;
+    dashboard)  vm 'sudo journalctl _SYSTEMD_USER_UNIT=hermes-dashboard --no-pager -n 60' ;;
+    shim)       vm 'sudo journalctl _SYSTEMD_USER_UNIT=vertex-openai-proxy --no-pager -n 60' ;;
+    autoupdate) vm 'sudo journalctl _SYSTEMD_USER_UNIT=hermes-autoupdate --no-pager -n 80' ;;
+    honcho)     vm 'sudo docker compose -f ~/honcho/docker-compose.yml logs --tail=60' ;;
+    searxng)    vm 'sudo docker compose -f ~/searxng/docker-compose.yml logs --tail=60' ;;
+    *) c_err "unknown log target '${1}'"; echo "  try: gateway dashboard shim autoupdate honcho searxng"; return 1 ;;
+  esac
+}
+
+cmd_update() {
+  head1 "Updating the server"
+  # Run the autoupdate UNIT, not `hermes update` directly. The unit has its own
+  # cgroup, so it survives the gateway restart the update triggers — and it also
+  # restarts the dashboard and re-verifies afterwards.
+  vm 'systemctl --user start hermes-autoupdate.service
+echo "  running... (this can take several minutes)"
+for i in $(seq 1 80); do
+  s=$(systemctl --user is-active hermes-autoupdate.service 2>/dev/null)
+  [ "$s" != "activating" ] && break
+  sleep 15
+done
+echo "  result: $(systemctl --user show hermes-autoupdate.service -p Result --value)"
+export PATH=$HOME/.local/bin:$PATH
+echo "  now on: $(hermes --version 2>/dev/null | head -1)"
+[ -f ~/.hermes/autoupdate/last-failure ] && echo "  ⚠ last run FAILED — hermesctl logs autoupdate" || true'
+}
+
+cmd_update_desktop() {
+  need_hermes_local || return 1
+  head1 "Updating the desktop app on this Mac"
+  echo "  the app is built from its own checkout and has no auto-update feed,"
+  echo "  so this is the supported way to move it forward."
+  hermes update || { c_err "hermes update failed"; return 1; }
+  c_ok "  updated: $(hermes --version 2>/dev/null | head -1)"
+  echo "  rebuilding and launching the app (this closes the running one)..."
+  hermes desktop
+}
+
+cmd_update_check() {
+  head1 "Update available?"
+  # `hermes update --check` prints the ANSWER then a hint line ("Run 'hermes
+  # update' to install."). tail -1 grabs the hint, which reads as an instruction
+  # even when you are already current — pick the meaningful line instead.
+  vm 'export PATH=$HOME/.local/bin:$PATH
+echo "  server:   $(hermes update --check 2>&1 | grep -iE "commits behind|up to date" | head -1 | sed "s/^[^A-Za-z]*//")"'
+  if need_hermes_local 2>/dev/null; then
+    echo "  this Mac: $(hermes update --check 2>&1 | grep -iE 'commits behind|up to date' | head -1 | sed 's/^[^A-Za-z]*//')"
+  fi
+}
+
+cmd_autoupdate() {
+  case "${1:-show}" in
+    show)
+      head1 "Weekly automatic update"
+      vm 'systemctl --user list-timers hermes-autoupdate.timer --no-pager | head -3
+echo "  enabled: $(systemctl --user is-enabled hermes-autoupdate.timer 2>/dev/null)"
+echo "  last ok: $(cat ~/.hermes/autoupdate/last-success 2>/dev/null || echo never)"
+[ -f ~/.hermes/autoupdate/last-failure ] && echo "  ⚠ FAILED at $(cat ~/.hermes/autoupdate/last-failure)" || echo "  failures: none"' ;;
+    off) head1 "Disabling weekly automatic update"
+         vm 'systemctl --user disable --now hermes-autoupdate.timer && echo "  disabled"' ;;
+    on)  head1 "Enabling weekly automatic update"
+         vm 'systemctl --user enable --now hermes-autoupdate.timer
+systemctl --user list-timers hermes-autoupdate.timer --no-pager | sed -n 2p' ;;
+    *) c_err "usage: hermesctl autoupdate [show|off|on]"; return 1 ;;
+  esac
+}
+
+cmd_gateway() {
+  case "${1:-status}" in
+    status)  vm 'echo "  systemd: $(systemctl --user is-active hermes-gateway.service)"
+export PATH=$HOME/.local/bin:$PATH; hermes gateway status 2>&1 | head -12' ;;
+    start)   vm 'systemctl --user start hermes-gateway.service; sleep 3; echo "  $(systemctl --user is-active hermes-gateway.service)"' ;;
+    stop)    vm 'systemctl --user stop hermes-gateway.service; echo "  $(systemctl --user is-active hermes-gateway.service)"' ;;
+    restart) vm 'systemctl --user restart hermes-gateway.service; sleep 4; echo "  $(systemctl --user is-active hermes-gateway.service)"' ;;
+    kick)
+      head1 "Force-recovering the gateway"
+      # For a gateway that is "active" but doing nothing: systemd won't restart it
+      # because it hasn't exited. Clear stale locks and start clean.
+      vm 'systemctl --user stop hermes-gateway.service
+pkill -u "$USER" -f "gateway run" 2>/dev/null || true
+sleep 2
+rm -f ~/.hermes/gateway.lock ~/.hermes/gateway.pid
+systemctl --user start hermes-gateway.service
+sleep 5
+echo "  now: $(systemctl --user is-active hermes-gateway.service)"
+echo "  (if it says inactive, it exited 78 = config error: hermesctl logs gateway)"' ;;
+    *) c_err "usage: hermesctl gateway [status|start|stop|restart|kick]"; return 1 ;;
+  esac
+}
+
+cmd_dashboard() {
+  case "${1:-restart}" in
+    restart) vm 'systemctl --user restart hermes-dashboard.service; sleep 5
+echo "  $(systemctl --user is-active hermes-dashboard.service)"
+echo "  responds: HTTP $(curl -s -o /dev/null -w "%{http_code}" http://localhost:'"${PORT}"'/)"' ;;
+    *) c_err "usage: hermesctl dashboard restart"; return 1 ;;
+  esac
+}
+
+cmd_restart_all() {
+  head1 "Restarting every service"
+  # Order matters: the Vertex shim must be up before Honcho, or Honcho's first
+  # memory call fails.
+  vm 'systemctl --user restart vertex-openai-proxy.service
+sleep 3
+systemctl --user restart hermes-dashboard.service hermes-gateway.service
+sudo docker compose -f ~/searxng/docker-compose.yml restart >/dev/null 2>&1
+sudo docker compose -f ~/honcho/docker-compose.yml restart >/dev/null 2>&1
+echo "  waiting for things to settle..."; sleep 20
+bash ~/hermes-install/03-verify.sh 2>&1 | tail -6'
+}
+
+cmd_tunnel() {
+  head1 "Opening the secure gateway tunnel"
+  echo "  then open http://localhost:${PORT}   (Ctrl-C here closes it)"
+  exec gcloud compute start-iap-tunnel "${VM}" "${PORT}" \
+    --local-host-port="localhost:${PORT}" --zone="${ZONE}" --project="${PROJ}"
+}
+
+cmd_open() {
+  local code
+  code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 4 "http://localhost:${PORT}/" 2>/dev/null)"
+  case "${code}" in
+    200|302|401) c_ok "  tunnel is up"; open "http://localhost:${PORT}" 2>/dev/null || \
+                 echo "  open http://localhost:${PORT}" ;;
+    *) c_warn "  no tunnel on localhost:${PORT} — start one with:  hermesctl tunnel" ; return 1 ;;
+  esac
+}
+
+cmd_vm() {
+  case "${1:-status}" in
+    status) gcloud compute instances describe "${VM}" --zone="${ZONE}" --project="${PROJ}" \
+              --format='value(status)' 2>/dev/null | sed 's/^/  /' ;;
+    start)  head1 "Starting the VM"
+            gcloud compute instances start "${VM}" --zone="${ZONE}" --project="${PROJ}" 2>&1 | tail -2
+            echo "  waiting ~60s for services to come back..."; sleep 60
+            cmd_status ;;
+    stop)   c_warn "  Stopping the VM stops the agent, scheduled jobs and the weekly update."
+            c_warn "  The disk and Cloud NAT keep billing. Continue? [y/N]"
+            read -r a; [ "${a}" = "y" ] || { echo "  cancelled"; return 0; }
+            gcloud compute instances stop "${VM}" --zone="${ZONE}" --project="${PROJ}" 2>&1 | tail -2 ;;
+    *) c_err "usage: hermesctl vm [status|start|stop]"; return 1 ;;
+  esac
+}
+
+cmd_disk() {
+  head1 "Disk"
+  vm 'df -h / | tail -1
+echo "  reclaiming..."
+sudo docker image prune -f >/dev/null 2>&1
+sudo journalctl --vacuum-time=7d >/dev/null 2>&1
+du -sh ~/.hermes/logs ~/.hermes/sessions ~/.cache/ms-playwright 2>/dev/null
+df -h / | tail -1'
+}
+
+case "${1:-help}" in
+  status)          cmd_status ;;
+  doctor)          cmd_doctor ;;
+  logs)            shift; cmd_logs "${@:-gateway}" ;;
+  update)          cmd_update ;;
+  update-desktop)  cmd_update_desktop ;;
+  update-all)      cmd_update && cmd_update_desktop ;;
+  update-check)    cmd_update_check ;;
+  autoupdate)      shift; cmd_autoupdate "${1:-show}" ;;
+  gateway)         shift; cmd_gateway "${1:-status}" ;;
+  dashboard)       shift; cmd_dashboard "${1:-restart}" ;;
+  restart-all)     cmd_restart_all ;;
+  tunnel)          cmd_tunnel ;;
+  open)            cmd_open ;;
+  ssh)             exec gcloud compute ssh "${VM}" --zone="${ZONE}" --project="${PROJ}" --tunnel-through-iap ;;
+  vm)              shift; cmd_vm "${1:-status}" ;;
+  disk)            cmd_disk ;;
+  help|-h|--help)  usage ;;
+  *) c_err "unknown command: $1"; echo; usage; exit 1 ;;
+esac
