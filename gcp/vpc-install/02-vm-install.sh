@@ -63,7 +63,14 @@ else
   echo "    already installed — skipping (use \`hermes update\` to upgrade)"
 fi
 export PATH="${HOME}/.local/bin:${PATH}"
-hermes version || { echo "ERROR: hermes not on PATH after install" >&2; exit 1; }
+# `hermes version` was REMOVED as a subcommand — v0.20.5 only accepts `--version`
+# ("invalid choice: 'version'"). The old form made this script exit 1 at step 3 on any
+# current Hermes, i.e. every fresh clone. Try the new flag first, fall back to the old
+# subcommand so this also works against an older pinned Hermes.
+hermes --version 2>/dev/null || hermes version 2>/dev/null || {
+  echo "ERROR: hermes not runnable after install (tried --version and version)" >&2
+  exit 1
+}
 
 echo "############################################################"
 echo "# 4/8  Chrome + Playwright"

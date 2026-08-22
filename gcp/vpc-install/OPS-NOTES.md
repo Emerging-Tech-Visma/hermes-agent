@@ -49,7 +49,7 @@ One block that tells you almost everything:
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
 
-echo "── hermes ─────────────────"; hermes version; hermes doctor 2>&1 | tail -20
+echo "── hermes ─────────────────"; hermes --version; hermes doctor 2>&1 | tail -20
 echo "── services ───────────────"; systemctl --user list-units 'hermes*' 'memory-backup*' --no-pager
 echo "── containers ─────────────"; sudo docker ps --format '{{.Names}}\t{{.Status}}'
 echo "── listeners ──────────────"; sudo ss -ltnp | grep -E ':(9119|8080|8000)\b'
@@ -263,9 +263,9 @@ cp ~/.hermes/.env        ~/.hermes/.env.bak-$(date +%F)
 systemctl --user stop hermes-gateway.service hermes-dashboard.service
 
 # 3. Upgrade in place.
-hermes version          # note the current version
+hermes --version        # note the current version
 hermes update
-hermes version          # confirm it moved
+hermes --version        # confirm it moved
 
 # 4. Bring it back and verify. NOTE: `hermes update` restarts the gateway but NOT
 #    the dashboard, so restarting it here is required, not belt-and-braces —
@@ -285,7 +285,7 @@ or `skills/` — but take the backups in step 1 anyway.
 systemctl --user stop hermes-gateway.service hermes-dashboard.service
 curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash -s -- --skip-browser
 systemctl --user start hermes-dashboard.service hermes-gateway.service
-hermes version && hermes doctor
+hermes --version && hermes doctor
 ```
 
 ### After any upgrade — check these three things
@@ -740,7 +740,7 @@ gcloud compute ssh hermes-agent --zone=europe-west2-b --tunnel-through-iap --com
 export PATH="$HOME/.local/bin:$PATH"
 cp ~/.hermes/config.yaml ~/.hermes/config.yaml.bak-$(date +%F)
 systemctl --user stop hermes-gateway.service hermes-dashboard.service
-hermes update && hermes version
+hermes update && hermes --version
 systemctl --user start hermes-dashboard.service hermes-gateway.service
 hermes doctor'
 ```

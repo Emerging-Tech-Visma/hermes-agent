@@ -11,8 +11,10 @@ bad()  { echo "  FAIL  $1"; FAIL=$((FAIL+1)); }
 echo "=== Hermes on GCP — verification ==========================="
 
 # 1. Hermes CLI
-if hermes version >/dev/null 2>&1; then
-  ok "hermes CLI ($(hermes version 2>/dev/null | head -1))"
+# `hermes version` is gone in v0.20.5+ ("invalid choice: 'version'"); --version is the
+# supported form. Keep the old one as a fallback for older pinned installs.
+if hermes --version >/dev/null 2>&1 || hermes version >/dev/null 2>&1; then
+  ok "hermes CLI ($( { hermes --version 2>/dev/null || hermes version 2>/dev/null; } | head -1))"
 else
   bad "hermes CLI not on PATH"
 fi

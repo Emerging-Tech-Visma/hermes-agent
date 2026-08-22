@@ -80,6 +80,15 @@ Established by reading v0.20.5 on the live VM, not inferred:
 
 ### Fixed
 
+- **INSTALL-BLOCKING: `02-vm-install.sh` died at step 3 on every current Hermes.** It
+  called `hermes version`, which was **removed as a subcommand** — v0.20.5 answers
+  `hermes: error: argument command: invalid choice: 'version'` and only accepts
+  `--version`. Because that call is guarded by `|| { …; exit 1; }`, the installer aborted
+  with "ERROR: hermes not on PATH after install" on a perfectly good install, and no
+  amount of re-running helped. Found by applying this release to the live VM — a fresh
+  clone today would have hit it immediately. Now tries `--version` first and falls back to
+  the old subcommand for older pinned installs. `03-verify.sh` check 1 and the
+  `OPS-NOTES.md` snippets had the same stale form and are fixed too.
 - **`hermes update` leaves the dashboard on pre-update code.** `--plan` restarts only the
   gateway; this install also runs `hermes-dashboard.service`, the endpoint the desktop app
   and browser actually connect to, which the updater knows nothing about. The autoupdate
@@ -101,8 +110,24 @@ in-app path, but this install does not need it — the timer sidesteps the probl
 
 ### Verified
 
-`hermes update --plan` and `--check` run read-only on the live VM (v0.20.5, 3 commits
-behind at the time). Desktop side: `/Applications/Hermes.app` carries **no
+**The whole path was exercised on the live VM, not just installed.** `02-vm-install.sh`
+re-run to exit 0; timer armed for `Sun 2026-08-23 04:25:21 UTC`; then
+`systemctl --user start hermes-autoupdate.service` — the same unit the timer fires — was
+run against a VM that was genuinely 3 commits behind:
+
+| | |
+|---|---|
+| Unit result | `Result=success`, `ExecMainStatus=0` |
+| Version moved | `upstream 209e2ebd (+1 carried commit)` → `upstream 8e475ed2` |
+| Markers | `last-success` only — no `last-failure` |
+| Restart order | gateway `09:42:35` → dashboard `09:42:42` |
+| `03-verify.sh` | **14/14**, including the new check 14 |
+
+That restart order is the proof the design works: the updater restarted the gateway,
+**survived it** (a cron- or dashboard-launched updater would have been reaped there), and
+then restarted the dashboard.
+
+`hermes update --plan` and `--check` were also run read-only beforehand. Desktop side: `/Applications/Hermes.app` carries **no
 `app-update.yml`**, so there is no electron auto-update feed; `hermes desktop` is
 documented as *"Build and launch the native desktop app"*, confirming the app is built
 from its own checkout and cannot be updated by a VM-side timer.
