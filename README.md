@@ -9,12 +9,12 @@ Live install probed **2026-08-19**: Hermes **v0.20.4**, Ubuntu 26.04 LTS, Chrome
 Vertex **`gemini-3.7-flash`** @ `global` (+ `gemini-3.5-flash`), SearXNG and Honcho up,
 no external IP.
 
-[![version](https://img.shields.io/badge/version-0.14.4-blue)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.15.0-blue)](CHANGELOG.md)
 [![Hermes](https://img.shields.io/badge/Hermes-v0.20.4-8A2BE2)](https://hermes-agent.nousresearch.com)
 [![data](https://img.shields.io/badge/data-europe--west2-green)](#eu-data-residency)
 [![inference](https://img.shields.io/badge/inference-vertex%20global-yellow)](#eu-data-residency)
 [![model](https://img.shields.io/badge/model-gemini--3.7--flash-orange)](#eu-data-residency)
-[![verify](https://img.shields.io/badge/03--verify.sh-13%2F13-brightgreen)](gcp/vpc-install/README.md)
+[![verify](https://img.shields.io/badge/03--verify.sh-14%2F14-brightgreen)](gcp/vpc-install/README.md)
 
 </div>
 
@@ -74,7 +74,7 @@ gcloud compute ssh hermes-agent --zone=europe-west2-b --tunnel-through-iap
 export HERMES_DASHBOARD_PASSWORD='choose-a-strong-password'
 bash ~/hermes-install/02-vm-install.sh
 
-# 3. Verify (on the VM) — targets 13/13:
+# 3. Verify (on the VM) — targets 14/14:
 bash ~/hermes-install/03-verify.sh
 ```
 

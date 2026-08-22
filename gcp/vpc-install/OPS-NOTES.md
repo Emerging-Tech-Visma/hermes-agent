@@ -38,6 +38,7 @@ alias hermes-gw='gcloud compute start-iap-tunnel hermes-agent 9119 --local-host-
 8. [Stopping, starting and rebooting the VM](#8-stopping-starting-and-rebooting-the-vm)
 9. [Scenario cookbook](#9-scenario-cookbook)
 10. [Symptom → cause table](#10-symptom--cause-table)
+11. [Keeping Hermes up to date (backend + desktop)](#11-keeping-hermes-up-to-date-backend--desktop)
 
 ---
 
@@ -244,6 +245,11 @@ closes. This is the classic "worked yesterday, dead this morning" cause.
 
 ## 3. Updating the Hermes backend
 
+> Weekly updates are **automated** by `hermes-autoupdate.timer` — see
+> [§11](#11-keeping-hermes-up-to-date-backend--desktop), which also explains why the
+> updater must not be launched from `hermes cron` or the desktop app, and how to update
+> the desktop app itself. This section is the manual path.
+
 ### The normal path
 
 ```bash
@@ -261,7 +267,9 @@ hermes version          # note the current version
 hermes update
 hermes version          # confirm it moved
 
-# 4. Bring it back and verify.
+# 4. Bring it back and verify. NOTE: `hermes update` restarts the gateway but NOT
+#    the dashboard, so restarting it here is required, not belt-and-braces —
+#    otherwise the dashboard keeps serving pre-update code (§11a).
 systemctl --user start hermes-dashboard.service hermes-gateway.service
 hermes doctor
 bash ~/hermes-install/03-verify.sh
@@ -977,6 +985,9 @@ gcloud projects remove-iam-policy-binding test-disco-cm \
 | Sign-in works, then fails ~12h later | session TTL — sign out and in. Not a fault (§7) |
 | `localhost:9119` won't load | the tunnel died (sleep/reboot/VM stop) (§7) |
 | Gateway `active` but does nothing | wedged → §2b, then install the watchdog §2c |
+| In-app / dashboard update reports failure | the updater ran inside the gateway cgroup and was reaped when `hermes update` restarted it. Use the timer or a plain SSH `hermes update` (§11b) |
+| Updated Hermes, but the UI looks unchanged | `hermes update` does not restart `hermes-dashboard.service`; restart it (§11a) |
+| Autoupdate timer enabled but never fires | malformed `AUTOUPDATE_SCHEDULE`; check `systemd-analyze calendar '<expr>'` (§11a) |
 | Gateway `inactive (dead)` after a config edit | exit **78** = config error; `RestartPreventExitStatus=78` stops the restart loop on purpose (§2a-bis) |
 | Gateway won't start, "already running" | stale `gateway.lock` / `gateway.pid` → §2b step 3 |
 | Dashboard login rejects `curl -u user:pass` | not a fault — raw HTTP Basic isn't the flow. `POST /auth/password-login` with `{"provider":"basic","username":…,"password":…}` mints a session token (§7) |
@@ -1018,3 +1029,131 @@ HERMES_DASHBOARD_PASSWORD='pw' dashboard-setup.sh kennet 9119
 ```
 
 Install-time detail and design rationale: **[INSTALL.md](INSTALL.md)**.
+
+---
+
+## 11. Keeping Hermes up to date (backend + desktop)
+
+There are **two** things to update and they are genuinely separate. Conflating them is
+the source of most confusion here.
+
+| | Where it lives | How it updates |
+|---|---|---|
+| **Backend** — agent, gateway, dashboard | the VM | `hermes update`, automated by `hermes-autoupdate.timer` (weekly, Sunday) |
+| **Desktop app** | your Mac | built from its own checkout; **manual, two commands** |
+
+### 11a. Backend — automated weekly
+
+`AUTOUPDATE_ENABLE=true` in `00-vars.sh` installs a systemd timer that runs
+[`scripts/hermes-autoupdate.sh`](scripts/hermes-autoupdate.sh) every Sunday at 04:00 UTC
+(plus a randomised delay up to 30 min). Each run:
+
+1. `hermes update --check` — exits quietly if there is nothing to do (no restarts, no churn)
+2. `hermes update --yes` — keeps Hermes' own pre-update backup
+3. **restarts `hermes-dashboard.service`** — see the warning below
+4. runs `03-verify.sh` and fails loudly if the new code does not pass
+
+```bash
+# is it armed, and when does it next fire?
+systemctl --user list-timers hermes-autoupdate.timer --no-pager
+
+# what happened last time?
+sudo journalctl _SYSTEMD_USER_UNIT=hermes-autoupdate --no-pager -n 60
+
+# run it now, without waiting for Sunday
+systemctl --user start hermes-autoupdate.service
+
+# just check, don't install
+AUTOUPDATE_MODE=check ~/.local/bin/hermes-autoupdate.sh
+```
+
+State markers live in `~/.hermes/autoupdate/`: `last-success`, `last-failure`,
+`last-check`, `pending`. `03-verify.sh` check 14 fails if `last-failure` exists, so a
+broken update does not rot silently.
+
+> ⚠️ **`hermes update` restarts the gateway but NOT our dashboard.**
+> `hermes update --plan` lists exactly one service — `gateway [default] … systemd`. Our
+> install also runs `hermes-dashboard.service`, which is the endpoint the desktop app and
+> browser connect to, and the updater knows nothing about it. Without an explicit
+> restart the dashboard keeps serving the **pre-update code**, so the app looks like it
+> never updated. The autoupdate script handles this; if you ever run `hermes update` by
+> hand, restart the dashboard yourself.
+
+### 11b. Why a systemd timer and NOT `hermes cron`
+
+This is the important bit, and it is not a style preference.
+
+`hermes update` restarts `hermes-gateway.service`. A `hermes cron` job runs **inside that
+gateway process**. The gateway unit sets `KillMode=mixed` and an `ExecStopPost` cgroup
+cleanup, so when it stops, everything in its cgroup is reaped — **including a `hermes
+update` launched from a cron job**. The job destroys its own runtime mid-flight.
+
+The exact same trap catches updates started from the **desktop app or dashboard**: the
+spawned updater is a child of the gateway, so `systemctl restart hermes-gateway` kills it
+before it can finish. That is why an in-app update can report failure while having partly
+succeeded.
+
+A systemd timer is a separate unit with its own cgroup. When the updater restarts the
+gateway, the updater itself is untouched. No Hermes code change and no
+`systemd-run --scope` wrapper is required — the isolation comes free from *not launching
+the updater from the thing being restarted*.
+
+> **Do not "fix" this with `agent.restart_drain_timeout`.** Those keys are real
+> (`gateway/restart.py`), but the default `restart_drain_timeout` is **0 — no drain at
+> all**: a restart interrupts in-flight agents immediately. Setting it to `5` *increases*
+> the wait. The 1800-second figure sometimes quoted here is `HERMES_AGENT_TIMEOUT`, the
+> **idle-agent** timeout, which has nothing to do with restart drain. The only real drain
+> in play is `cron_drain_timeout` (default 30s), and it is already short.
+
+### 11c. Desktop app — manual, on your Mac
+
+The desktop app is **not** covered by the timer and cannot be. It is built from its own
+checkout — `hermes desktop` is documented as *"Build and launch the native desktop app"* —
+and the installed bundle carries **no `app-update.yml`**, so there is no electron
+auto-update feed to point at.
+
+```bash
+# on your Mac
+export PATH="$HOME/.local/bin:$PATH"
+hermes update          # updates the local checkout (which contains apps/desktop)
+hermes desktop         # rebuild and launch the app from that checkout
+```
+
+> `/Applications/Hermes.app` is whatever the original DMG installed and does **not** get
+> refreshed by `hermes update`. The freshly built app lives under
+> `~/.hermes/hermes-agent/apps/desktop/release/`. If you want the `/Applications` copy to
+> be current, replace it from there — or just launch via `hermes desktop`.
+
+**Version skew is usually harmless.** The app is a thin client over the dashboard: all
+compute, tools and memory are on the VM. Keeping the backend current matters far more
+than keeping the app current. Update the app when you want new UI, or when a release note
+says the client protocol changed.
+
+### 11d. Turning it off, or making it human-in-the-loop
+
+For a production agent you may not want unattended upgrades of a live service.
+
+```bash
+# report only — writes ~/.hermes/autoupdate/pending, installs nothing
+# (00-vars.sh)  AUTOUPDATE_MODE="check"
+
+# off entirely
+# (00-vars.sh)  AUTOUPDATE_ENABLE="false"
+```
+
+Then re-run `02-vm-install.sh`, or on the VM directly:
+
+```bash
+systemctl --user disable --now hermes-autoupdate.timer
+```
+
+### 11e. If an unattended update breaks the install
+
+```bash
+sudo journalctl _SYSTEMD_USER_UNIT=hermes-autoupdate --no-pager -n 100   # what it did
+ls -l ~/.hermes/backups/                                                # pre-update backup
+bash ~/hermes-install/03-verify.sh                                      # what is broken now
+```
+
+Hermes takes a pre-update backup by default (do **not** pass `--no-backup` in the timer).
+Rollback and re-install paths are in §3.

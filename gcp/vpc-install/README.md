@@ -37,6 +37,8 @@ The installer pulls Hermes **unpinned** from upstream `install.sh`, so a fresh r
 whatever is current — re-probe `hermes --version` rather than trusting this line.
 
 > **Status: REBUILT FROM SCRATCH on `test-disco-cm`, 2026-08-18 — `03-verify.sh` 13/13.**
+> (The suite gained a 14th check — the weekly autoupdate timer — in 0.15.0, so the
+> current target is 14/14; that check did not exist on 2026-08-18.)
 > The project was empty (0 instances) beforehand, so this is a true from-zero run of both
 > scripts, not an edit of a live box. Confirmed live: no external IP, IAP-only firewall
 > (the only `0.0.0.0/0` rule is the DENY), Cloud NAT, Hermes v0.20.4, Chrome 151,
@@ -90,7 +92,7 @@ bash 01-gcp-setup.sh
 gcloud compute ssh hermes-agent --zone=europe-west2-b --tunnel-through-iap
 bash ~/hermes-install/02-vm-install.sh
 
-# 3. Verify (on the VM) — targets 13/13:
+# 3. Verify (on the VM) — targets 14/14:
 bash ~/hermes-install/03-verify.sh
 
 # 4. Back on your PC — make the secure gateway permanent (survives sleep/reboot),
@@ -137,7 +139,7 @@ paste. Or open <http://localhost:9119> in a browser.
 | Document | What's in it |
 |---|---|
 | **[INSTALL.md](INSTALL.md)** | The full guide: architecture, region/model probe results, every step explained, security model, cost breakdown, and why each design choice was made (including why SearXNG replaced SerpApi). |
-| **[OPS-NOTES.md](OPS-NOTES.md)** | Day-2 operations over SSH: **idle/wedged gateway recovery** (plus an automatic watchdog), **updating the Hermes backend**, **updating every other service**, setup the desktop app can't do, backup/restore, tunnel troubleshooting, and a symptom → cause table. |
+| **[OPS-NOTES.md](OPS-NOTES.md)** | Day-2 operations over SSH: **idle/wedged gateway recovery** (plus an automatic watchdog), **updating the Hermes backend**, **updating every other service**, setup the desktop app can't do, backup/restore, tunnel troubleshooting, a symptom → cause table, and **§11 keeping Hermes up to date** (automated backend + manual desktop app). |
 
 ---
 
@@ -147,7 +149,7 @@ paste. Or open <http://localhost:9119> in a browser.
 00-vars.sh                    ← EDIT THIS. All settings live here.
 01-gcp-setup.sh               run on your PC:  VPC, NAT, firewall, SA, bucket, VM, IAM
 02-vm-install.sh              run on the VM:   Hermes, Chrome, Playwright, SearXNG, Honcho, services
-03-verify.sh                  run on the VM:   9-point health check
+03-verify.sh                  run on the VM:   14-point health check
 
 INSTALL.md                    full installation guide
 OPS-NOTES.md                  SSH operations / troubleshooting
@@ -164,6 +166,7 @@ configs/
 scripts/
   dashboard-setup.sh          idempotent dashboard basic-auth (run on the VM)
   memory-backup.sh            ~/.hermes → GCS rsync (hourly timer)
+  hermes-autoupdate.sh        weekly `hermes update` (run by the timer, not by hand)
   vertex-openai-proxy.py      OpenAI-compat shim in front of Vertex (for Honcho)
   gateway-tunnel.sh           open the secure gateway (run on your PC)
 
@@ -171,6 +174,7 @@ systemd/ (user units, kept alive by linger)
   hermes-dashboard.service    dashboard on :9119 — the gateway endpoint
   hermes-gateway.service      cron / routines / messaging
   memory-backup.service/.timer
+  hermes-autoupdate.service/.timer  weekly backend update, Sunday 04:00 UTC
   vertex-openai-proxy.service Vertex shim on :8900
 ```
 

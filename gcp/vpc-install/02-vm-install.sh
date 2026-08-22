@@ -365,13 +365,15 @@ echo "############################################################"
 echo "# 8/8  Services"
 echo "############################################################"
 mkdir -p "${HOME}/.local/bin"
-for s in dashboard-setup.sh memory-backup.sh; do
+for s in dashboard-setup.sh memory-backup.sh hermes-autoupdate.sh; do
   install -m 0755 "${INSTALL_DIR}/scripts/${s}" "${HOME}/.local/bin/${s}"
 done
 
 mkdir -p "${HOME}/.config/systemd/user"
 UNITS="memory-backup.service memory-backup.timer"
 [ "${DASHBOARD_ENABLE}" = "true" ] && UNITS="${UNITS} hermes-dashboard.service"
+[ "${AUTOUPDATE_ENABLE:-false}" = "true" ] && \
+  UNITS="${UNITS} hermes-autoupdate.service hermes-autoupdate.timer"
 
 # Gateway unit: PREFER the one the Hermes installer generates. Verified 2026-07-28 —
 # the installer's unit is strictly better than our template: it encodes Hermes'
@@ -398,6 +400,8 @@ for u in ${UNITS}; do
       -e "s|__BUCKET__|${MEMORY_BUCKET}|g" \
       -e "s|__WORKSPACE__|${HOME}/.hermes|g" \
       -e "s|__PORT__|${DASHBOARD_PORT}|g" \
+      -e "s|__AUTOUPDATE_MODE__|${AUTOUPDATE_MODE:-apply}|g" \
+      -e "s|__AUTOUPDATE_SCHEDULE__|${AUTOUPDATE_SCHEDULE:-Sun *-*-* 04:00:00 UTC}|g" \
       "${INSTALL_DIR}/systemd/${u}" > "${HOME}/.config/systemd/user/${u}"
 done
 
@@ -406,6 +410,23 @@ done
 sudo loginctl enable-linger "${USER}"
 systemctl --user daemon-reload
 systemctl --user enable --now memory-backup.timer
+
+if [ "${AUTOUPDATE_ENABLE:-false}" = "true" ]; then
+  # Validate the OnCalendar expression before enabling: a malformed one makes the
+  # timer load but never fire, which looks identical to "updates are working".
+  if systemd-analyze calendar "${AUTOUPDATE_SCHEDULE}" >/dev/null 2>&1; then
+    systemctl --user enable --now hermes-autoupdate.timer
+    NEXT="$(systemctl --user list-timers hermes-autoupdate.timer --no-pager 2>/dev/null | sed -n '2p')"
+    echo "    weekly backend autoupdate: ${AUTOUPDATE_MODE:-apply} mode, next run:"
+    echo "      ${NEXT:-（run: systemctl --user list-timers hermes-autoupdate.timer）}"
+  else
+    echo "    WARNING: AUTOUPDATE_SCHEDULE='${AUTOUPDATE_SCHEDULE}' is not a valid"
+    echo "    systemd OnCalendar expression — timer NOT enabled. Check it with:"
+    echo "      systemd-analyze calendar '${AUTOUPDATE_SCHEDULE}'"
+  fi
+else
+  systemctl --user disable --now hermes-autoupdate.timer 2>/dev/null || true
+fi
 
 if [ "${DASHBOARD_ENABLE}" = "true" ]; then
   # If the operator didn't export a password, GENERATE one rather than leaving the
