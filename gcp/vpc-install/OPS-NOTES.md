@@ -843,6 +843,55 @@ bash ~/hermes-install/02-vm-install.sh 2>&1 | tail -20'
 
 Re-running no longer logs you out — the session-signing secret is preserved (0.11.1).
 
+### "Could not reach the remote Hermes gateway while refreshing its WebSocket ticket"
+
+Also shows as **gateway offline**, or in Settings → Connection mode: *"Could not reach this
+gateway yet. Check the URL — the auth method will appear once it responds."*
+
+**Check credentials first. This is almost always expired gcloud auth, not the URL, not the
+app, and not an upgrade you just did.** Run:
+
+```bash
+bash gcp/vpc-install/scripts/gateway-tunnel.sh --status
+```
+
+It names the cause. The fix, when it is credentials:
+
+```bash
+gcloud auth login                                                # interactive, needs a browser
+launchctl kickstart -k gui/$(id -u)/com.hermes.gateway-tunnel     # restart the tunnel
+```
+
+#### Why this one is so misleading
+
+An expired-credential tunnel **looks completely healthy**:
+
+| Check | Says | Reality |
+|---|---|---|
+| `launchctl list \| grep hermes` | status **0** | fine — the process is running |
+| `lsof -iTCP:9119 -sTCP:LISTEN` | **bound** | the tunnel accepts local connections |
+| `curl localhost:9119` | **HTTP 000** | ← the only check that tells the truth |
+
+The tunnel process stays up and keeps the port bound; it just cannot forward, because
+`gcloud` can no longer mint a token. The app connects at the TCP level, then fails when it
+tries to refresh its WebSocket ticket — hence that specific wording. **Any liveness check
+based on the process or the port reports HEALTHY.** Only a real HTTP request reveals it.
+The log ends in:
+
+```
+googlecloudsdk.core.credentials.exceptions.TokenRefreshError: There was a problem
+refreshing your current auth tokens: Reauthentication failed.
+  $ gcloud auth login
+```
+
+> **Expect this periodically.** Google Workspace reauth policies expire the credential on a
+> schedule, so a permanently-installed LaunchAgent *will* hit this — it is not a fault in
+> the install. Hit on 2026-08-19, first observed right after an unrelated upgrade, which is
+> exactly how it ends up misattributed.
+
+> The same lesson as `03-verify.sh` test 13: **liveness is not correctness.** A bound port
+> proves as little about a tunnel as an open port proves about Honcho's memory.
+
 ### "The desktop app says Remote gateway sign-in required"
 
 Nine times out of ten the gateway tunnel is simply down, not your credentials. Order of

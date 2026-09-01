@@ -360,9 +360,20 @@ gcloud compute start-iap-tunnel hermes-agent 9119 \
 > An unauthenticated `GET /` returns **HTTP 302 → `/login`**. That is the auth gate
 > working, not a failure — don't chase it.
 
-**If the gateway will not come up**, check for a port fight before anything else — launchd
-does not surface a failed bind, it just respawns while the log fills with *"Address already
-in use"*:
+**If the gateway will not come up**, run `bash scripts/gateway-tunnel.sh --status` first —
+it distinguishes the two failures that look identical from the app.
+
+The one that fools everybody: **expired gcloud credentials**. The tunnel process keeps
+running and keeps the port bound, so `launchctl` reports status 0 and `lsof` shows a
+listener, while every forward fails — `curl localhost:9119` returns **HTTP 000** and the app
+says *"Could not reach the remote Hermes gateway while refreshing its WebSocket ticket."*
+Fix with `gcloud auth login`, then
+`launchctl kickstart -k gui/$(id -u)/com.hermes.gateway-tunnel`. Expect it periodically:
+Workspace reauth policies expire the credential on a schedule. Full write-up in
+[OPS-NOTES.md](OPS-NOTES.md).
+
+Otherwise check for a port fight — launchd does not surface a failed bind, it just respawns
+while the log fills with *"Address already in use"*:
 
 ```bash
 lsof -nP -iTCP:9119 -sTCP:LISTEN     # who holds the port

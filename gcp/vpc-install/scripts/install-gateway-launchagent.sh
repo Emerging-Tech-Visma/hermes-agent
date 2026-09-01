@@ -143,10 +143,24 @@ Gateway is UP and will stay up (restarts on sleep/reboot/network change).
 DONE
 else
   echo "WARNING: no response on :${DASHBOARD_PORT} yet."
-  echo "  Reconnect after wake/cold start can take 20-40s — try again shortly."
-  echo "  If it stays down, read ${LOG}:"
-  tail -20 "${LOG}" 2>/dev/null | sed 's/^/    /'
-  echo "  'Address already in use' => another tunnel holds the port."
-  echo "  A credentials error => run: gcloud auth login"
+  # Name the cause instead of dumping a log and hoping. Expired credentials are the most
+  # common one and the most confusing, because the agent stays "running" and the port
+  # stays bound — see the note in gateway-tunnel.sh --status.
+  if grep -qiE "TokenRefreshError|Reauthentication failed|gcloud auth login" "${LOG}" 2>/dev/null; then
+    echo
+    echo "  CAUSE: EXPIRED gcloud CREDENTIALS (found in ${LOG})."
+    echo "  The agent will keep running and holding the port while failing every"
+    echo "  forward, so it looks healthy to launchctl. Fix:"
+    echo "     gcloud auth login"
+    echo "     launchctl kickstart -k ${DOMAIN}/${LABEL}"
+  elif grep -qi "Address already in use" "${LOG}" 2>/dev/null; then
+    echo
+    echo "  CAUSE: another tunnel already holds :${DASHBOARD_PORT}."
+    lsof -nP -iTCP:"${DASHBOARD_PORT}" -sTCP:LISTEN 2>/dev/null | sed 's/^/    /'
+  else
+    echo "  Reconnect after wake/cold start can take 20-40s — try again shortly."
+    echo "  If it stays down, read ${LOG}:"
+    tail -20 "${LOG}" 2>/dev/null | sed 's/^/    /'
+  fi
   exit 1
 fi
