@@ -28,12 +28,66 @@ version: [CONTRIBUTING.md](CONTRIBUTING.md) has the mechanics.
 
 ## [Unreleased]
 
+- **Exercise the virgin-install rule at least once.** v0.14.1 added the rule and
+  `scripts/teardown.sh`, but it has **not yet been run**: the installer was validated by
+  restoring broken preconditions on a live VM, not by installing onto a virgin OS. Strongly
+  evidenced, not proven, for a from-zero install. Do a teardown → 01 → 02 → 03 pass and
+  record the date, Hermes version and Honcho SHA in `AGENTS.md`.
 - **Pin the Honcho clone.** `02-vm-install.sh` does `git clone --depth 1` of `main`,
   which pins nothing — every install gets a different Honcho.
 - Replace the plaintext dashboard password with a scrypt
   `HERMES_DASHBOARD_BASIC_AUTH_PASSWORD_HASH`.
 - Optional: `serpapi-mcp` as an *additional* MCP tool for true Google SERP data,
   alongside SearXNG rather than replacing it.
+
+---
+
+## [0.16.2] — 2026-09-01
+
+### Fixed — the gateway failure that reports itself as healthy
+
+Hit live on 2026-08-19, and **initially misattributed to an unrelated upgrade**. The desktop
+app showed *"Could not reach the remote Hermes gateway while refreshing its WebSocket
+ticket"* and **gateway offline**; Settings → Connection mode said *"Could not reach this
+gateway yet. Check the URL — the auth method will appear once it responds."*
+
+Cause: **expired gcloud credentials.** The tunnel process stays alive and keeps port 9119
+bound; it simply cannot forward, because `gcloud` can no longer mint a token. That makes it
+pathologically misleading:
+
+| Check | Says | Reality |
+|---|---|---|
+| `launchctl list \| grep hermes` | status **0** | process is running |
+| `lsof -iTCP:9119 -sTCP:LISTEN` | **bound** | accepts local connections |
+| `curl localhost:9119` | **HTTP 000** | ← the only honest check |
+
+The app connects at TCP level, then fails refreshing its WebSocket ticket — exactly what the
+message says. **Every process- or port-based liveness check reports HEALTHY.** Same lesson as
+`03-verify.sh` test 13: *liveness is not correctness.*
+
+- **`hermesctl` now fails fast with the real fix.** Every VM-side command goes over the IAP
+  tunnel, so an expired credential breaks *all* of it — and breaks it confusingly, because
+  `gcloud compute ssh` returns **255**, which `vm()`'s retry loop treats as transient and
+  retries 3× before giving up on something no retry can fix. A `require_creds` preflight now
+  runs once per invocation and prints the two-command fix.
+- **`gateway-tunnel.sh --status` diagnoses instead of reporting up/down.** It separates
+  "nothing listening" (tunnel not running) from "listening but HTTP 000" (running, not
+  forwarding), greps the log for `TokenRefreshError`, and names the fix. Verified against the
+  real broken state — it identified the cause correctly.
+- **`install-gateway-launchagent.sh`** names the cause (credentials vs. port conflict)
+  instead of dumping 20 log lines.
+- Documented in `OPS-NOTES.md` and `INSTALL.md`, including that this **recurs by design**:
+  Workspace reauth policies expire the credential on a schedule, so a permanently-installed
+  LaunchAgent will meet it periodically. Not a fault in the install, and not upgrade-related.
+
+The fix, for the record:
+
+```bash
+gcloud auth login                                              # interactive, needs a browser
+launchctl kickstart -k gui/$(id -u)/com.hermes.gateway-tunnel   # pick up the new token
+```
+
+Confirmed on the live install: recovered to HTTP 302 in ~6s.
 
 ---
 

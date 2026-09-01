@@ -46,9 +46,46 @@ c_warn() { printf '\033[33m%s\033[0m\n' "$*"; }
 c_err()  { printf '\033[31m%s\033[0m\n' "$*" >&2; }
 head1()  { printf '\n\033[1m%s\033[0m\n' "$*"; }
 
+# EXPIRED CREDENTIALS check, once per invocation. Every VM-side command here goes over
+# the IAP tunnel, so when the gcloud credential expires *everything* in this script fails
+# — and it fails confusingly: `gcloud compute ssh` returns 255, which the retry loop below
+# treats as transient and retries 3x before giving up on an error that no amount of
+# retrying can fix.
+#
+# Worse, expired credentials do NOT look like a credentials problem anywhere else: the
+# gateway LaunchAgent keeps running and keeps port 9119 bound, so `launchctl list` says
+# status 0 and only an actual HTTP request (HTTP 000) reveals it. The desktop app reports
+# "Could not reach the remote Hermes gateway while refreshing its WebSocket ticket", which
+# reads like a server or upgrade problem. Hit 2026-08-19 and initially misattributed to an
+# unrelated upgrade. Fail fast and name the real fix instead.
+CREDS_CHECKED="no"
+require_creds() {
+  [ "${CREDS_CHECKED}" = "yes" ] && return 0
+  local out
+  if ! out="$(gcloud auth print-access-token 2>&1)"; then
+    case "${out}" in
+      *Reauthentication*|*TokenRefreshError*|*"auth login"*|*invalid_grant*)
+        c_err "Your gcloud credentials have EXPIRED — nothing can reach the VM."
+        echo   "  This is not a fault in the install, and not caused by an upgrade."
+        echo   "  Workspace reauth policies expire it on a schedule; expect it periodically."
+        echo
+        echo   "  Fix (needs an interactive browser login):"
+        echo   "     gcloud auth login"
+        echo   "     launchctl kickstart -k gui/\$(id -u)/com.hermes.gateway-tunnel"
+        return 1 ;;
+      *)
+        c_err "gcloud could not produce an access token:"
+        printf '  %s\n' "${out}" | head -5
+        return 1 ;;
+    esac
+  fi
+  CREDS_CHECKED="yes"
+}
+
 # `gcloud compute ssh` intermittently exits 255 on a transient tunnel failure.
 # Every command here is idempotent, so retrying is always safe.
 vm() {
+  require_creds || return 1
   local tries=0
   while :; do
     gcloud compute ssh "${VM}" --zone="${ZONE}" --project="${PROJ}" \
