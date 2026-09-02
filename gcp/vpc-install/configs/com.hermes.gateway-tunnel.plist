@@ -60,6 +60,19 @@
     <string>__GCLOUD_DIR__:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     <key>HOME</key>
     <string>__HOME__</string>
+    <!-- The installed supervisor lives in ~/.local/bin with NO 00-vars.sh beside it, so
+         its config MUST arrive here. Leaving these out ships a supervisor that cannot
+         find VM_NAME and dies instantly under `set -u` — the gateway then never comes up,
+         while the repo checkout appears fine because a checkout DOES have 00-vars.sh.
+         Re-run install-gateway-launchagent.sh to change any of these. -->
+    <key>VM_NAME</key>
+    <string>__VM_NAME__</string>
+    <key>ZONE</key>
+    <string>__ZONE__</string>
+    <key>PROJECT_ID</key>
+    <string>__PROJECT_ID__</string>
+    <key>DASHBOARD_PORT</key>
+    <string>__PORT__</string>
   </dict>
 
   <!-- The supervisor writes its own rotated log; this catches anything before that.

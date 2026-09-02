@@ -26,8 +26,19 @@
 # forwarding. A credential lapse then self-heals the moment you re-authenticate.
 set -uo pipefail
 
+# Config comes from the environment when installed to ~/.local/bin (the plist sets it),
+# and from 00-vars.sh when this script is run straight out of a repo checkout. The
+# installed copy has no repo next to it, so sourcing must not be mandatory.
 HERE="$(cd "$(dirname "$0")" && pwd)"
-source "${HERE}/../00-vars.sh"
+if [ -z "${VM_NAME:-}" ] || [ -z "${ZONE:-}" ] || [ -z "${PROJECT_ID:-}" ]; then
+  if [ -f "${HERE}/../00-vars.sh" ]; then
+    # shellcheck disable=SC1091
+    source "${HERE}/../00-vars.sh"
+  else
+    echo "ERROR: VM_NAME/ZONE/PROJECT_ID not set and no 00-vars.sh beside this script" >&2
+    exit 78
+  fi
+fi
 
 PORT="${DASHBOARD_PORT:-9119}"
 LOG="${HOME}/Library/Logs/hermes-gateway-tunnel.log"

@@ -148,6 +148,29 @@ Confirmed on the live install: recovered to HTTP 302 in ~6s.
 
 ---
 
+- **The supervisor and the plist had drifted out of step, and the pair as committed could
+  not start.** `762a5ad` moved the installed supervisor to `~/.local/bin` (correctly — a
+  LaunchAgent must not reference a git worktree), but two halves were left behind: the
+  supervisor still did `source "${HERE}/../00-vars.sh"` unconditionally, and the plist
+  template passed none of that config. In `~/.local/bin` there is no `00-vars.sh`, so
+  `VM_NAME` was unset and the script died instantly under `set -u` — **the gateway would
+  never come up from a clean install**.
+
+  This is the same shape as the fresh-install defects in 0.13.0: it works in a checkout,
+  because a checkout *does* have `00-vars.sh` beside the script, and only fails once
+  installed somewhere else. Fixed by making config arrive from the environment (the plist
+  now passes `VM_NAME`, `ZONE`, `PROJECT_ID`, `DASHBOARD_PORT`), with `00-vars.sh` used
+  only as a fallback when the script is run straight out of a repo. A missing config now
+  produces `ERROR: VM_NAME/ZONE/PROJECT_ID not set and no 00-vars.sh beside this script`
+  instead of a bare `unbound variable`.
+
+  Verified three ways: the isolated script with no config errors clearly; with config in
+  the environment it starts and launches its child; and a full
+  `install-gateway-launchagent.sh` run renders every placeholder, passes `plutil -lint`,
+  and reports the gateway UP on HTTP 302.
+
+---
+
 ## [0.16.1] — 2026-08-22
 
 ### Fixed
