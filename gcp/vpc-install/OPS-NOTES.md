@@ -618,7 +618,7 @@ gcloud compute start-iap-tunnel hermes-agent 9119 \
 
 # 4. Using the LaunchAgent? Force a reconnect instead.
 launchctl kickstart -k gui/$(id -u)/com.hermes.gateway-tunnel
-tail -f /tmp/hermes-gateway-tunnel.log
+tail -f ~/Library/Logs/hermes-gateway-tunnel.log
 ```
 
 | Tunnel error | Meaning |
@@ -922,7 +922,7 @@ checks:
 lsof -nP -iTCP:9119 -sTCP:LISTEN                 # is anything serving locally?
 launchctl list | grep -i hermes                  # status != 0 means the agent is failing
 curl -s -o /dev/null -w '%{http_code}\n' http://localhost:9119/   # 302 = healthy auth gate
-tail -20 /tmp/hermes-gateway-tunnel.log
+tail -20 ~/Library/Logs/hermes-gateway-tunnel.log
 launchctl kickstart -k gui/$(id -u)/com.hermes.gateway-tunnel      # force reconnect
 ```
 

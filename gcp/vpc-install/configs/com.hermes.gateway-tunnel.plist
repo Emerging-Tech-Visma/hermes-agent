@@ -27,7 +27,7 @@
   Manage:
     launchctl kickstart -k gui/$(id -u)/com.hermes.gateway-tunnel   # force reconnect
     launchctl bootout   gui/$(id -u)/com.hermes.gateway-tunnel      # stop + disable
-    tail -f /tmp/hermes-gateway-tunnel.log
+    tail -f ~/Library/Logs/hermes-gateway-tunnel.log
 -->
 <plist version="1.0">
 <dict>

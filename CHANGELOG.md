@@ -131,6 +131,15 @@ Confirmed on the live install: recovered to HTTP 302 in ~6s.
 
 ---
 
+- **Log moved out of `/tmp`** to `~/Library/Logs/hermes-gateway-tunnel.log`, and the
+  supervisor **rotates it** (2 MB cap). The old setup pointed gcloud's raw stderr at a
+  `/tmp` file that nothing rotated, which is how it reached **27 MB / 413k lines** of the
+  same repeated auth error. All five references across `INSTALL.md`, `OPS-NOTES.md` and the
+  plist's own instructions were updated to the new path — a stale `tail -f` in a runbook is
+  worse than none, since it shows an empty file and looks like "no errors".
+
+---
+
 ## [0.16.1] — 2026-08-22
 
 ### Fixed

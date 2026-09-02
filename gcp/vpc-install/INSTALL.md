@@ -385,7 +385,7 @@ while the log fills with *"Address already in use"*:
 ```bash
 lsof -nP -iTCP:9119 -sTCP:LISTEN     # who holds the port
 launchctl list | grep -i hermes      # stale agents (status ≠ 0 means it is failing)
-tail -f /tmp/hermes-gateway-tunnel.log
+tail -f ~/Library/Logs/hermes-gateway-tunnel.log
 ```
 
 The pre-VPC install shipped a **`com.hermes.tunnel`** agent — an SSH `-L` tunnel to a VM in
@@ -406,7 +406,7 @@ Or just open **<http://localhost:9119>** in a browser — same backend, same log
 launchctl kickstart -k gui/$(id -u)/com.hermes.gateway-tunnel   # force reconnect
 bash gcp/vpc-install/scripts/install-gateway-launchagent.sh     # re-apply (idempotent)
 bash gcp/vpc-install/scripts/install-gateway-launchagent.sh --uninstall
-tail -f /tmp/hermes-gateway-tunnel.log
+tail -f ~/Library/Logs/hermes-gateway-tunnel.log
 ```
 
 Reconnect after wake takes ~20–40s (launchd `ThrottleInterval` + gcloud cold start), so
