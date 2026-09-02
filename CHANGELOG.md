@@ -105,6 +105,14 @@ repeatedly misattributed to whatever had changed most recently.
 
   Verified by `SIGSTOP`-ing the child to reproduce the exact zombie shape (port bound,
   HTTP 000): detected and recovered in **~35s** with a new child.
+- **The supervisor is installed to `~/.local/bin/`, not referenced in the checkout.** The
+  first version pointed launchd at the script inside the repo working tree — and this repo's
+  own workflow uses **temporary per-agent git worktrees**, so cleaning one up would delete
+  the running supervisor and kill the gateway, failing in a way that looks exactly like the
+  credential fault it exists to fix. The installer now `install -m 0755`s it to a stable
+  path and passes `VM_NAME` / `ZONE` / `PROJECT_ID` / `DASHBOARD_PORT` through the plist's
+  `EnvironmentVariables`, because the installed copy has no `00-vars.sh` beside it to
+  source. Caught before it could bite, on 2026-09-02.
 - **`hermesctl` now fails fast with the real fix.** Every VM-side command goes over the IAP
   tunnel, so an expired credential breaks *all* of it — and breaks it confusingly, because
   `gcloud compute ssh` returns **255**, which `vm()`'s retry loop treats as transient and
