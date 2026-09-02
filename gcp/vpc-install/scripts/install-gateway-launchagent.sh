@@ -23,7 +23,7 @@ LABEL="com.hermes.gateway-tunnel"
 TEMPLATE="${HERE}/../configs/${LABEL}.plist"
 TARGET="${HOME}/Library/LaunchAgents/${LABEL}.plist"
 DOMAIN="gui/$(id -u)"
-LOG="/tmp/hermes-gateway-tunnel.log"
+LOG="${HOME}/Library/Logs/hermes-gateway-tunnel.log"
 
 if [ "$(uname -s)" != "Darwin" ]; then
   echo "ERROR: launchd is macOS-only. On Linux use a systemd --user unit instead." >&2
@@ -82,7 +82,14 @@ fi
 # --- Render the template --------------------------------------------------------
 echo "==> Writing ${TARGET}"
 mkdir -p "${HOME}/Library/LaunchAgents"
-sed -e "s|__GCLOUD__|${GCLOUD}|g" \
+SUPERVISOR="${HERE}/gateway-tunnel-supervisor.sh"
+[ -x "${SUPERVISOR}" ] || chmod +x "${SUPERVISOR}" 2>/dev/null || true
+if [ ! -f "${SUPERVISOR}" ]; then
+  echo "ERROR: missing ${SUPERVISOR}" >&2; exit 1
+fi
+
+sed -e "s|__SUPERVISOR__|${SUPERVISOR}|g" \
+    -e "s|__GCLOUD__|${GCLOUD}|g" \
     -e "s|__GCLOUD_DIR__|$(dirname "${GCLOUD}")|g" \
     -e "s|__HOME__|${HOME}|g" \
     -e "s|__VM_NAME__|${VM_NAME}|g" \

@@ -19,7 +19,7 @@ VM_NAME="${VM_NAME:-hermes-agent}"
 ZONE="${ZONE:-europe-west2-b}"
 PORT="${DASHBOARD_PORT:-9119}"
 
-LOG="/tmp/hermes-gateway-tunnel.log"
+LOG="${HOME}/Library/Logs/hermes-gateway-tunnel.log"
 
 if [ "${1:-}" = "--status" ]; then
   CODE="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 8 \

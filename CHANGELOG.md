@@ -65,6 +65,46 @@ The app connects at TCP level, then fails refreshing its WebSocket ticket — ex
 message says. **Every process- or port-based liveness check reports HEALTHY.** Same lesson as
 `03-verify.sh` test 13: *liveness is not correctness.*
 
+#### The real defect: the tunnel could never recover, even after you re-authenticated
+
+`gcloud compute start-iap-tunnel` **binds the local port first**, and when its token later
+fails to refresh it **does not exit** — it retries internally, forever, holding the listener
+open. Caught in the act 2026-09-02: one process alive **1d 9h**, emitting **~1.5 auth errors
+per second**, having written a **27 MB / 413,000-line** log.
+
+`KeepAlive` only restarts a process that **dies**, so it never fired. And because the stuck
+process never re-reads credentials, **`gcloud auth login` did not fix it** — only a manual
+`launchctl kickstart` did. That is why the failure kept coming back and why it was
+repeatedly misattributed to whatever had changed most recently.
+
+- **`scripts/gateway-tunnel-supervisor.sh` (new)** — the LaunchAgent now runs this instead
+  of `gcloud` directly. It probes the tunnel **over HTTP** (the only check that separates
+  *forwarding* from *listening*) and kills and restarts the child after 45s of no
+  forwarding. When credentials have genuinely expired it stops the child, waits, and posts a
+  macOS notification naming the one command a human must run — then reconnects on its own
+  once you do. **Verified** by `SIGSTOP`ing the child to reproduce the exact zombie shape
+  (port bound, HTTP 000): detected and recovered in **~35s** with a new child.
+- **Logs moved out of `/tmp` to `~/Library/Logs/` and are rotated** (2 MB cap). The previous
+  setup pointed gcloud's raw stderr at a file nothing rotated, which is how it reached 27 MB.
+- **THE ACTUAL DEFECT: the tunnel could never recover, and `KeepAlive` could not help.**
+  `gcloud compute start-iap-tunnel` **binds the local port first**, and when its token later
+  fails to refresh it **does not exit** — it retries internally, forever, holding the
+  listener open. Measured 2026-09-02: one such process had been alive **1d 9h** logging ~1.5
+  `Reauthentication failed` errors per **second**, having written a **27 MB / 413k-line**
+  log. launchd's `KeepAlive` only restarts a process that *dies*, so it never fired — and
+  since the stuck process never re-read credentials, **`gcloud auth login` did not fix it
+  either.** Only a manual `launchctl kickstart` did. That is why this failure kept recurring
+  and kept looking like something else had broken.
+
+  **Fix: `scripts/gateway-tunnel-supervisor.sh`**, which the LaunchAgent now runs instead of
+  `gcloud` directly. It probes the tunnel **over HTTP** — the only check that distinguishes
+  forwarding from listening — and kills and restarts the child after 45s of not forwarding.
+  A credential lapse now self-heals the moment you re-authenticate, and while it is waiting
+  it sends a macOS notification naming the one command a human must run. It also rotates its
+  own log, and logs moved from `/tmp` to `~/Library/Logs/`.
+
+  Verified by `SIGSTOP`-ing the child to reproduce the exact zombie shape (port bound,
+  HTTP 000): detected and recovered in **~35s** with a new child.
 - **`hermesctl` now fails fast with the real fix.** Every VM-side command goes over the IAP
   tunnel, so an expired credential breaks *all* of it — and breaks it confusingly, because
   `gcloud compute ssh` returns **255**, which `vm()`'s retry loop treats as transient and

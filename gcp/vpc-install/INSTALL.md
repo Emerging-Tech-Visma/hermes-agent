@@ -324,7 +324,14 @@ bash gcp/vpc-install/scripts/install-gateway-launchagent.sh
 
 It fills the plist placeholders from `00-vars.sh` and `which gcloud`, boots out any stale
 agent, loads the job, and waits until the gateway actually answers before reporting
-success. Verified 2026-08-18: killing the tunnel process had it back up in **~8s**.
+success.
+
+The agent runs **`scripts/gateway-tunnel-supervisor.sh`**, not `gcloud` directly — that
+matters. `start-iap-tunnel` binds the port and then, if its token cannot refresh, retries
+forever *without exiting*, so launchd's `KeepAlive` never fires and the port stays bound but
+dead. The supervisor probes over HTTP and restarts the tunnel when it stops forwarding, so a
+credential lapse self-heals as soon as you re-authenticate (with a macOS notification
+telling you to). It also rotates its own log — the old setup reached 27 MB. Verified 2026-08-18: killing the tunnel process had it back up in **~8s**.
 
 > **Why the default is the agent, not a manual tunnel.** A hand-started
 > `start-iap-tunnel` belongs to the shell that launched it and dies with that shell —

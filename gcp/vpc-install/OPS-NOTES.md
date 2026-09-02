@@ -862,6 +862,15 @@ gcloud auth login                                                # interactive, 
 launchctl kickstart -k gui/$(id -u)/com.hermes.gateway-tunnel     # restart the tunnel
 ```
 
+#### It now self-heals — but only since v0.16.2
+
+The LaunchAgent runs `scripts/gateway-tunnel-supervisor.sh`, which probes the tunnel over
+HTTP every 15s and restarts it after 45s of not forwarding. So a credential lapse recovers
+**by itself** once you re-authenticate, and you get a macOS notification telling you to.
+
+If you are on an older install, re-run
+`bash gcp/vpc-install/scripts/install-gateway-launchagent.sh` to pick it up.
+
 #### Why this one is so misleading
 
 An expired-credential tunnel **looks completely healthy**:
@@ -891,6 +900,18 @@ refreshing your current auth tokens: Reauthentication failed.
 
 > The same lesson as `03-verify.sh` test 13: **liveness is not correctness.** A bound port
 > proves as little about a tunnel as an open port proves about Honcho's memory.
+
+#### The part that made it recur (fixed in v0.16.2)
+
+`gcloud compute start-iap-tunnel` **binds the local port first**, and when its token later
+fails to refresh it **does not exit** — it retries internally, forever, holding the listener
+open. Measured 2026-09-02: one such process had been alive **1d 9h**, logging ~1.5
+`Reauthentication failed` errors per **second**, with a **27 MB / 413k-line** log.
+
+`KeepAlive` only restarts a process that **dies**, so it never fired. And because the stuck
+process never re-read credentials, **`gcloud auth login` did not fix it either** — only a
+manual `launchctl kickstart` did. That is precisely why this failure kept coming back and
+kept looking like something else had broken.
 
 ### "The desktop app says Remote gateway sign-in required"
 
