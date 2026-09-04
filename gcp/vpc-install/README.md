@@ -30,7 +30,7 @@ Desktop app / browser  ──IAP tunnel──►  GCE VM (no public IP, private 
 | Memory | self-hosted Honcho (Postgres/pgvector), **backed by Vertex — no external API keys** |
 | Browser | Chrome + Playwright Chromium, headless |
 | Auth | one attached service account — **no key files anywhere** |
-| Cost | ~$200–275/month at moderate daily team use (3.8-flash introductory pricing; ~$235–365 from 2027-01-01) |
+| Cost | ~$200–275/month at moderate daily team use, while 3.8-flash is on introductory pricing — the model line doubles on 2027-01-01, see [INSTALL.md §11](INSTALL.md) |
 
 Verified against **Hermes Agent v0.20.4** (`2026.8.18`), GCP as of **2026-08-19**.
 The installer pulls Hermes **unpinned** from upstream `install.sh`, so a fresh run gets
