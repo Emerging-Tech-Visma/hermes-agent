@@ -78,7 +78,7 @@ Full rules, the ruleset's exact settings, and the release/tag procedure:
 ```
 Slack (Socket Mode)  ┐
 Desktop app / browser ┼─► Hermes gateway + dashboard on a GCE VM
-                      ┘        ├─ chat model:  Vertex AI  gemini-3.7-flash (region: global — EU-residency exception)
+                      ┘        ├─ chat model:  Vertex AI  gemini-3.8-flash (region: global — EU-residency exception)
                                ├─ knowledge:   Vertex AI Search (Google Drive connector + verified URLs) via MCP
                                └─ memory:      self-hosted Honcho (Docker: FastAPI + Postgres/pgvector, :8000)
 ```
@@ -115,7 +115,7 @@ it is DHCP-assigned per VM creation, so **do not treat it as a fixed fact**.
 | Ingress | `35.235.240.0/20` (IAP) → `tcp:22`, `tcp:9119`, target-tag `hermes-agent`; deny-all @ 65000. **No `0.0.0.0/0` allow rule exists.** | ✅ |
 | Gateway to client | `gcloud compute start-iap-tunnel … 9119` → desktop app / browser at `localhost:9119` | — |
 | Service account | `hermes-agent@test-disco-cm.iam.gserviceaccount.com` (`aiplatform.user`, `storage.objectAdmin`) | ✅ |
-| Chat model / Vertex region | `google/gemini-3.7-flash` (default) + `gemini-3.5-flash` / **`global`** — ⚠️ EU-residency exception, **inference only**; VM/bucket stay `europe-west2` | ✅ probed 200/200 on 2026-08-18 |
+| Chat model / Vertex region | `google/gemini-3.8-flash` (default) + `gemini-3.5-flash` / **`global`** — ⚠️ EU-residency exception, **inference only**; VM/bucket stay `europe-west2` | ✅ probed 200/200 on 2026-09-04 (`modelVersion` echo confirmed); ⚠️ 3.8 not yet run on a from-scratch install |
 | Hermes Agent version | **v0.20.4** (`2026.8.18`), at `~/.local/bin/hermes` → `~/.hermes/hermes-agent`. ⚠️ `02-vm-install.sh` installs from upstream `install.sh` **unpinned** — every install gets whatever is current that day, exactly like Honcho below. The docs said v0.19.0 for three weeks after the box moved on. | ✅ probed 2026-08-19 |
 | Web search | self-hosted **SearXNG**, Docker, `127.0.0.1:8080`, JSON API on (containers `searxng` + `searxng-valkey`) | ✅ 2026-08-19 |
 | Browser | **Chrome 151.0.7922.169** + Playwright Chromium, headless | ✅ probed 2026-08-19 |
@@ -148,9 +148,12 @@ it is a pass-through and cannot re-create a signature the client already discard
 A/B on the live box, only this value changed: `3.5-flash` → HTTP 400 on all 3 retries,
 no answer; `2.5-flash` → HTTP 200, recalled the seeded facts.
 
-**This does NOT affect Hermes' own chat**, which runs `gemini-3.7-flash` happily — it
-does not use the shim and its Vertex provider round-trips signatures properly (proved
-with a real tool-using agent turn that wrote a file on the VM).
+**This does NOT affect Hermes' own chat**, which runs `gemini-3.8-flash` — it does not
+use the shim and its Vertex provider round-trips signatures properly (proved 2026-08-18
+with a real tool-using agent turn that wrote a file on the VM). ⚠️ That proof was taken
+on `gemini-3.7-flash`; 3.8 is the same provider path and the same thinking-model family,
+but **re-run the tool-using turn on 3.8** before treating it as proved — a
+`:generateContent` 200 does not exercise the signature round-trip.
 
 Beware: a single-shot completion through the shim **succeeds** with 3.5-flash, so port
 liveness and shim-chat checks both pass on a dead dialectic. `03-verify.sh` **test 13**
@@ -221,7 +224,7 @@ to target a new project/VM.
 `europe-west1` (Belgium, EU). **Chat inference is the standing exception (see below).**
 
 ⚠️ **EU-residency EXCEPTION for the chat model (explicit owner decision, 2026-07-22,
-re-affirmed 2026-08-18).** Hermes chat runs `gemini-3.7-flash` (default) with
+re-affirmed 2026-09-04).** Hermes chat runs `gemini-3.8-flash` (default) with
 `gemini-3.5-flash` as a switchable fallback, on the Vertex **`global`** endpoint, which
 is NOT region-pinned. This knowingly relaxes the "regional European endpoint only" rule to get
 the newest model. Everything else (VM, bucket, KG, datastore, Honcho, **embeddings**) stays
@@ -261,14 +264,42 @@ Two things moved since 2026-07-28 and both matter:
 - **`gemini-3.5-flash` gained `europe-west3`** (was 404 there). The strict-EU fallback
   is widening — which is precisely why these tables carry dates. Re-probe, don't trust.
 
+**Re-probed 2026-09-04 (v0.17.0 decision — supersedes every table above):**
+
+| Model | eu-w1 | eu-w2 | eu-w3 | eu-w4 | eu-n1 | global |
+|---|---|---|---|---|---|---|
+| `gemini-3.8-flash` | 404 | 404 | 404 | 404 | 404 | **200** |
+| `gemini-3.7-flash` | 404 | 404 | 404 | 404 | 404 | **200** |
+| `gemini-3.6-flash` | 404 | 404 | 404 | 404 | 404 | **200** |
+| `gemini-3.5-flash` | 404 | **200** | **200** | 404 | 404 | **200** |
+| `gemini-3.5-flash-lite` | 404 | 404 | 404 | 404 | 404 | **200** |
+| `gemini-2.5-flash` | **200** | **200** | **200** | **200** | **200** | **200** |
+
+What this probe settles:
+- **`gemini-3.8-flash` is real on Vertex and is `global`-only** — same shape as 3.7 and
+  3.6. Confirmed the strong way: the 200 echoed `"modelVersion": "gemini-3.8-flash"`.
+- **Nothing else moved.** Every other row is byte-identical to the 2026-08-18 table, which
+  is what makes the new row trustworthy — the probe reproduced the known-good result.
+- **The EU-residency exception is unchanged, not widened.** 3.8 needs `global` for exactly
+  the same reason 3.7 did, and `gemini-3.5-flash` is still the strict-EU fallback at
+  `europe-west2`/`europe-west3`.
+- **There is no `gemini-3.8-flash-lite` and no `gemini-3.8-pro`** — both 404 @ `global`,
+  as does `gemini-3.9-flash`. Run that negative control every time: it is what
+  distinguishes "this model is served here" from "this name happens to resolve".
+
+⚠️ **Not yet validated from a virgin install.** The 3.8 probe is an API fact, not an
+install fact — as of 2026-09-04 the live box still runs 3.7-flash, and `03-verify.sh` plus
+the live tool-calling turn have **not** been re-run on 3.8. Per the from-scratch rule
+below, do that before calling this validated.
+
 [`gcp/vpc-install/`](gcp/vpc-install/) therefore runs **`VERTEX_REGION=global`** with the
-catalog `{gemini-3.7-flash (default), gemini-3.5-flash}` — the **EU-residency exception
+catalog `{gemini-3.8-flash (default), gemini-3.5-flash}` — the **EU-residency exception
 applies to CHAT INFERENCE ONLY**; VM, subnet, bucket, backups, SearXNG, Honcho and
 Honcho's **embeddings** (which use the regional `europe-west2` `:predict` endpoint) all
 remain in `europe-west2`. Both models probed 200 from the VM's own service account.
 
-`gemini-3.5-flash-lite` was **dropped from the catalog** in v0.13.0 — with 3.7-flash as
-flagship and 3.5-flash as the EU-capable fallback, a third flash tier earned nothing. It
+`gemini-3.5-flash-lite` was **dropped from the catalog** in v0.13.0 — with the newest
+flash as flagship and 3.5-flash as the EU-capable fallback, a third flash tier earned nothing. It
 still answers 200 @ `global` if you want it back; re-add it to `HERMES_MODELS`.
 
 **Reverting to strict EU residency:** set `VERTEX_REGION=europe-west2` + `HERMES_MODEL=google/gemini-3.5-flash`
@@ -286,9 +317,9 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST -H "Authorization: Bearer $TOKE
 ```
 #### Getting the model NAME right — and proving the probe isn't lying to you
 
-Canonical Vertex model IDs used here (validated 2026-08-18): **`gemini-3.7-flash`**,
-**`gemini-3.5-flash`**, `gemini-3.5-flash-lite`, `gemini-2.5-flash`. In `00-vars.sh` and
-`config.yaml` these carry Hermes' `google/` provider prefix (`google/gemini-3.7-flash`);
+Canonical Vertex model IDs used here (validated 2026-09-04): **`gemini-3.8-flash`**,
+`gemini-3.7-flash`, **`gemini-3.5-flash`**, `gemini-3.5-flash-lite`, `gemini-2.5-flash`. In `00-vars.sh` and
+`config.yaml` these carry Hermes' `google/` provider prefix (`google/gemini-3.8-flash`);
 the raw Vertex REST path takes the bare id. `03-verify.sh` strips the prefix with
 `${HERMES_MODEL#google/}`.
 
@@ -303,7 +334,8 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/
 ```
 
 If `modelVersion` comes back equal to the id you asked for, the name is real and served.
-That check is what confirmed `gemini-3.7-flash` exists on Vertex even though
+That check is what confirmed `gemini-3.8-flash` (and before it `gemini-3.7-flash`)
+exists on Vertex even though
 `ai.google.dev`'s Gemini 3.5 Flash page does not mention it — **AI Studio ≠ Vertex cuts
 both ways**: AI Studio lists models Vertex won't serve, *and* Vertex serves models AI
 Studio's pages don't document. That page does confirm `gemini-3.5-flash` as the stable id
@@ -344,7 +376,7 @@ datastore in an EU multi-region/`eu`, and if OpenViking is ever enabled its
      above**, not an add-on. Custom VPC + Cloud NAT, VM with **no external IP**,
      ingress only from Google's IAP range, Ubuntu 26.04, Chrome + Playwright,
      self-hosted SearXNG (replaces SerpApi/hosted search), Honcho-on-Vertex, and
-     `gemini-3.7-flash` @ `global`. Desktop app + browser connect over
+     `gemini-3.8-flash` @ `global`. Desktop app + browser connect over
      `gcloud compute start-iap-tunnel` instead of a plain SSH tunnel. Guides:
      [`README.md`](gcp/vpc-install/README.md) ·
      [`INSTALL.md`](gcp/vpc-install/INSTALL.md) ·
@@ -402,9 +434,10 @@ docs, keyed to our setup): [`gcp/REFERENCE.md`](gcp/REFERENCE.md).
   not upgrade-safe — don't. Applies **per profile**: the serving profile's own
   `config.yaml` (e.g. `~/.hermes/profiles/<name>/config.yaml`) needs the block, not just the base.
 - **Vertex region ≠ AI-Studio availability.** See "EU data residency" above — the newest
-  flash models (`gemini-3.7-flash`, `gemini-3.6-flash`, `gemini-3.5-flash-lite`) are Vertex
-  `global`-only; `gemini-3.5-flash` is the newest on a regional EU endpoint (europe-west2 and,
-  since 2026-08-18, europe-west3), and EU-member regions otherwise cap at 2.5. The AI-Studio docs page lists models Vertex EU may not serve — always probe Vertex, not
+  flash models (`gemini-3.8-flash`, `gemini-3.7-flash`, `gemini-3.6-flash`,
+  `gemini-3.5-flash-lite`) are Vertex `global`-only; `gemini-3.5-flash` is the newest on a
+  regional EU endpoint (europe-west2 and, since 2026-08-18, europe-west3), and EU-member
+  regions otherwise cap at 2.5. The AI-Studio docs page lists models Vertex EU may not serve — always probe Vertex, not
   AI Studio. `03-verify.sh` now passes on `europe-*` OR the accepted `global`, and prints a
   residency warning when `global` is in use.
 - **Tunnel dies on VM stop / Mac sleep.** The dashboard is a systemd service and

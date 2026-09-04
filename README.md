@@ -9,7 +9,11 @@ Live install probed **2026-08-19**: Hermes **v0.20.4**, Ubuntu 26.04 LTS, Chrome
 Vertex **`gemini-3.7-flash`** @ `global` (+ `gemini-3.5-flash`), SearXNG and Honcho up,
 no external IP.
 
-[![version](https://img.shields.io/badge/version-0.16.2-blue)](CHANGELOG.md)
+> **0.17.0 moves the default model to `gemini-3.8-flash`** (re-probed on Vertex
+> 2026-09-04). The live box above still runs 3.7-flash until the install is re-run —
+> this line will be updated when it is re-probed.
+
+[![version](https://img.shields.io/badge/version-0.17.0-blue)](CHANGELOG.md)
 [![Hermes](https://img.shields.io/badge/Hermes-v0.20.4-8A2BE2)](https://hermes-agent.nousresearch.com)
 [![data](https://img.shields.io/badge/data-europe--west2-green)](#eu-data-residency)
 [![inference](https://img.shields.io/badge/inference-vertex%20global-yellow)](#eu-data-residency)
@@ -43,7 +47,7 @@ YOUR PC                                GOOGLE CLOUD
 │   zero compute)      │  encrypted    │  │ SearXNG           :8080  localhost    │ │
 └──────────────────────┘               │  │ Honcho memory :8000 + Vertex shim :8900│ │
                                        │  └──────────────────────────────────────┘  │
-                                       │  Vertex AI · gemini-3.7-flash · global ⚠️  │
+                                       │  Vertex AI · gemini-3.8-flash · global ⚠️  │
                                        └────────────────────────────────────────────┘
 ```
 
@@ -163,15 +167,18 @@ the transient `exit 255` that `gcloud compute ssh` occasionally throws.
 |---|---|---|
 | Host | GCE `e2-standard-4`, Ubuntu 26.04 LTS, 100 GB | Chrome + Postgres + SearXNG + Hermes need the headroom |
 | Network | Custom VPC, no external IP, Cloud NAT, IAP-only ingress | nothing to scan; access is IAM |
-| Model | Vertex AI `gemini-3.7-flash` (+ `3.5-flash`) @ `global` | newest flash, plus the newest one that also serves from an EU region; ⚠️ `global` is not region-pinned |
+| Model | Vertex AI `gemini-3.8-flash` (+ `3.5-flash`) @ `global` | newest flash, plus the newest one that also serves from an EU region; ⚠️ `global` is not region-pinned |
 | Search | Self-hosted **SearXNG** | native Hermes backend, no API key, no hosted-SaaS query log |
 | Browser | Chrome + Playwright Chromium, headless | real browser automation on the VM |
 | Memory | Self-hosted **Honcho** (Postgres/pgvector) **on Vertex** | per-user memory modelling; **zero external API keys** via a local OpenAI-compat shim |
 | Client | Hermes Desktop app or browser, over IAP | thin client; all compute remote |
 | Auth | One attached service account | **no key files anywhere** |
 
-Running cost at moderate daily team use: **~$235–365/month**. Chat tokens dominate —
-breakdown and the cheapest levers are in [INSTALL.md §11](gcp/vpc-install/INSTALL.md).
+Running cost at moderate daily team use: **~$200–275/month** while `gemini-3.8-flash`
+is on introductory pricing (**$0.75 / $3.75** per 1M input / output tokens through
+**2026-12-31**, then **$1.50 / $7.50** — back to ~$235–365/month from 2027-01-01).
+Chat tokens dominate — breakdown and the cheapest levers are in
+[INSTALL.md §11](gcp/vpc-install/INSTALL.md).
 
 ---
 
@@ -185,25 +192,29 @@ with one deliberate, owner-approved exception for **inference only**.
 | **Data at rest** — VM, subnet, GCS bucket, backups, SearXNG, Honcho | `europe-west2` | ✅ yes |
 | **Inference** — Vertex chat calls | `global` | ⚠️ **not region-pinned** |
 
-The reason is model availability. Re-probed directly against Vertex on **2026-08-18**
-(`:generateContent` POST, HTTP status):
+The reason is model availability. Re-probed directly against Vertex on **2026-09-04**
+(`:generateContent` POST, HTTP status; each 200 additionally confirmed by the echoed
+`modelVersion` matching the requested id):
 
 | Model | eu-w1 | eu-w2 | eu-w3 | eu-w4 | eu-n1 | global |
 |---|---|---|---|---|---|---|
+| `gemini-3.8-flash` | 404 | 404 | 404 | 404 | 404 | **200** |
 | `gemini-3.7-flash` | 404 | 404 | 404 | 404 | 404 | **200** |
 | `gemini-3.6-flash` | 404 | 404 | 404 | 404 | 404 | **200** |
 | `gemini-3.5-flash` | 404 | **200** | **200** | 404 | 404 | **200** |
 | `gemini-3.5-flash-lite` | 404 | 404 | 404 | 404 | 404 | **200** |
 | `gemini-2.5-flash` | **200** | **200** | **200** | **200** | **200** | **200** |
 
-**No European regional endpoint serves `gemini-3.7-flash`.** Running the newest flash
-model therefore requires the `global` endpoint. That trade was made knowingly:
+**No European regional endpoint serves `gemini-3.8-flash`.** Running the newest flash
+model therefore requires the `global` endpoint — 3.8 has exactly the same availability
+shape as 3.7 and 3.6, so this upgrade does not change the residency posture either way. That trade was made knowingly:
 infrastructure and all stored data — including Honcho's embeddings, which use the
 regional `europe-west2` endpoint — stay in `europe-west2`, and only the chat inference
 call leaves a pinned region.
 
-`gemini-3.5-flash` **gained `europe-west3`** since the 2026-07-28 probe, so the
-strict-EU fallback is widening over time. This is exactly why the table carries a date.
+`gemini-3.5-flash` holds `europe-west2` **and `europe-west3`** (west3 arrived after the
+2026-07-28 probe), so the strict-EU fallback is unchanged by this upgrade — and widening
+over time. This is exactly why the table carries a date.
 
 **To revert to strict regional-EU inference**, in `gcp/vpc-install/00-vars.sh`:
 
@@ -238,7 +249,7 @@ European region — and **re-probe** rather than trusting the table above.
 | [gcp/vpc-install/INSTALL.md](gcp/vpc-install/INSTALL.md) | Full guide — architecture, every command, security model, cost, design rationale. |
 | [gcp/vpc-install/OPS-NOTES.md](gcp/vpc-install/OPS-NOTES.md) | **Day-2 ops over SSH** — idle/wedged gateways, backend upgrades, service updates, symptom→cause table. |
 | [AGENTS.md](AGENTS.md) | Master runbook: architecture, canonical facts, and **lessons learned** (read before debugging anything). |
-| [CHANGELOG.md](CHANGELOG.md) | Version history. Currently **0.14.3**. Each entry is the notes of the matching [release](https://github.com/Emerging-Tech-Visma/hermes-agent/releases). |
+| [CHANGELOG.md](CHANGELOG.md) | Version history. Currently **0.17.0**. Each entry is the notes of the matching [release](https://github.com/Emerging-Tech-Visma/hermes-agent/releases). |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | How changes land: `main` is PR-only; every PR bumps the version and its changelog entry is auto-published as a release. |
 
 **Variants and deeper topics** (from the earlier public-IP install — still the best

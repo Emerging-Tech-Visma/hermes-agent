@@ -16,7 +16,7 @@ Desktop app / browser  ──IAP tunnel──►  GCE VM (no public IP, private 
                                          ├─ SearXNG      :8080  (localhost only)
                                          ├─ Honcho memory :8000  (localhost only)
                                          ├─ Vertex shim   :8900  (localhost only)
-                                         └─ Vertex AI  gemini-3.7-flash @ global ⚠️
+                                         └─ Vertex AI  gemini-3.8-flash @ global ⚠️
 ```
 
 | | |
@@ -25,12 +25,12 @@ Desktop app / browser  ──IAP tunnel──►  GCE VM (no public IP, private 
 | VM | `e2-standard-4`, 100 GB pd-balanced, no external IP |
 | Network | custom VPC + subnet, Private Google Access, Cloud NAT, IAP-only ingress |
 | Data residency | infra + storage `europe-west2`; ⚠️ inference on `global` (not region-pinned) |
-| Model | Vertex AI `gemini-3.7-flash` (default) + `gemini-3.5-flash`; Honcho's own reasoning on `gemini-3.5-flash` |
+| Model | Vertex AI `gemini-3.8-flash` (default) + `gemini-3.5-flash`; Honcho's own reasoning on `gemini-2.5-flash` (must **not** be 3.x) |
 | Search | self-hosted SearXNG (no API key, nothing leaves the region but the query itself) |
 | Memory | self-hosted Honcho (Postgres/pgvector), **backed by Vertex — no external API keys** |
 | Browser | Chrome + Playwright Chromium, headless |
 | Auth | one attached service account — **no key files anywhere** |
-| Cost | ~$235–365/month at moderate daily team use |
+| Cost | ~$200–275/month at moderate daily team use (3.8-flash introductory pricing; ~$235–365 from 2027-01-01) |
 
 Verified against **Hermes Agent v0.20.4** (`2026.8.18`), GCP as of **2026-08-19**.
 The installer pulls Hermes **unpinned** from upstream `install.sh`, so a fresh run gets
@@ -57,6 +57,14 @@ whatever is current — re-probe `hermes --version` rather than trusting this li
 > **The from-scratch run found FOUR install-blocking defects** that an incremental
 > re-run on an existing box could never surface — all fixed here, see
 > [CHANGELOG 0.13.0](../../CHANGELOG.md).
+>
+> ⚠️ **Everything above describes the 2026-08-18 rebuild, which ran `gemini-3.7-flash`.**
+> 0.17.0 moves the default to `gemini-3.8-flash`. The model id and its `global`-only
+> availability were re-probed against Vertex on **2026-09-04** (HTTP 200, echoed
+> `modelVersion` matched), **but this install has not yet been rebuilt from zero on
+> 3.8-flash** — in particular the live tool-calling turn and `03-verify.sh` have not been
+> re-run. Do that before treating 3.8 as validated; the check is in
+> [OPS-NOTES.md](OPS-NOTES.md) ("Prove the agent can actually use a tool").
 >
 > **Honcho runs on Vertex with zero external API keys** (v0.12.0) via a local
 > OpenAI-compat shim; stopping the shim makes the dialectic fail, proving the Vertex
@@ -200,8 +208,8 @@ systemd/ (user units, kept alive by linger)
    ```
 
 > ⚠️ **Region and model are coupled — changing one can break the other.**
-> `VERTEX_REGION` is `global` here because `gemini-3.7-flash` returns **404 in every
-> European regional endpoint** tested (west1/2/3/4, north1 — re-probed 2026-08-18).
+> `VERTEX_REGION` is `global` here because `gemini-3.8-flash` returns **404 in every
+> European regional endpoint** tested (west1/2/3/4, north1 — re-probed 2026-09-04).
 > `gemini-3.5-flash` is regional at `europe-west2` **and `europe-west3`** (west3 is new
 > since 2026-07-28); `europe-west1` caps at `gemini-2.5-flash`. `global` is **not
 > region-pinned** — the exception is scoped to inference, while VM/bucket/backups stay

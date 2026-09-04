@@ -56,7 +56,7 @@ export MEMORY_BUCKET="gs://${PROJECT_ID}-hermes-memory"
 # ---------------------------------------------------------------------------
 # Vertex AI models
 # ---------------------------------------------------------------------------
-# ⚠️  EU-RESIDENCY EXCEPTION — INFERENCE ONLY (owner decision, re-affirmed 2026-08-18)
+# ⚠️  EU-RESIDENCY EXCEPTION — INFERENCE ONLY (owner decision, re-affirmed 2026-09-04)
 #
 # VERTEX_REGION is `global`, which is NOT region-pinned. This is a deliberate,
 # owner-approved relaxation of the "European regional endpoint only" rule, taken to
@@ -64,24 +64,30 @@ export MEMORY_BUCKET="gs://${PROJECT_ID}-hermes-memory"
 # bucket, backups, SearXNG, Honcho, embeddings — stays in europe-west2, so DATA AT
 # REST REMAINS IN A EUROPEAN REGION. Only the inference endpoint is non-region-pinned.
 #
-# Why it is unavoidable for gemini-3.7-flash. Re-probed 2026-08-18
-# (`:generateContent` POST, HTTP status):
+# Why it is unavoidable for gemini-3.8-flash. Re-probed 2026-09-04
+# (`:generateContent` POST, HTTP status; a 200 was additionally confirmed by the
+# echoed `modelVersion` matching the requested id):
 #
 #   MODEL                    | eu-w1 | eu-w2 | eu-w3 | eu-w4 | eu-n1 | global
+#   gemini-3.8-flash         |  404  |  404  |  404  |  404  |  404  |  200
 #   gemini-3.7-flash         |  404  |  404  |  404  |  404  |  404  |  200
 #   gemini-3.6-flash         |  404  |  404  |  404  |  404  |  404  |  200
 #   gemini-3.5-flash         |  404  |  200  |  200  |  404  |  404  |  200
 #   gemini-3.5-flash-lite    |  404  |  404  |  404  |  404  |  404  |  200
 #   gemini-2.5-flash         |  200  |  200  |  200  |  200  |  200  |  200
 #
-# No European regional endpoint serves 3.7-flash. gemini-3.5-flash is the newest
-# flash on a regional EU endpoint — and it has GAINED europe-west3 since the
-# 2026-07-28 probe (was 404 there), so the regional fallback is widening.
+# No European regional endpoint serves 3.8-flash — same shape as 3.7 and 3.6.
+# gemini-3.5-flash is still the newest flash on a regional EU endpoint (europe-west2
+# and europe-west3), so the strict-EU fallback is unchanged.
+#
+# There is no `gemini-3.8-flash-lite` or `gemini-3.8-pro` on Vertex yet — both 404 at
+# `global` (probed 2026-09-04), as does `gemini-3.9-flash`. That negative control is
+# what proves the 3.8-flash 200 above is a real published model and not a loose alias.
 #
 # TO REVERT to strict regional-EU inference:
 #   VERTEX_REGION="europe-west2"  +  HERMES_MODELS="google/gemini-3.5-flash google/gemini-2.5-flash"
 #   HERMES_MODEL="google/gemini-3.5-flash"
-# and re-probe — flip back to a regional endpoint the moment 3.7-flash lands in a
+# and re-probe — flip back to a regional endpoint the moment 3.8-flash lands in a
 # European region. 03-verify.sh prints a residency warning whenever `global` is in use.
 export VERTEX_REGION="global"
 
@@ -90,11 +96,11 @@ export VERTEX_REGION="global"
 # Only list models that actually answer at VERTEX_REGION — a dead model shows up as
 # a selectable-but-broken row in the picker. Re-probe after any change.
 #
-# 3.5-flash-lite was dropped 2026-08-18: with 3.7-flash as the flagship and
+# 3.5-flash-lite was dropped 2026-08-18: with the newest flash as the flagship and
 # 3.5-flash as the strict-EU-capable fallback, a third flash tier earned nothing.
 # It still works @ global if you want it back — just re-add it to HERMES_MODELS.
-export HERMES_MODEL="google/gemini-3.7-flash"        # default (newest)
-export HERMES_MODELS="google/gemini-3.7-flash google/gemini-3.5-flash"
+export HERMES_MODEL="google/gemini-3.8-flash"        # default (newest)
+export HERMES_MODELS="google/gemini-3.8-flash google/gemini-3.5-flash"
 
 # ---------------------------------------------------------------------------
 # Tooling on the VM
@@ -170,9 +176,12 @@ export MEMORY_LLM_BACKEND="vertex"
 # lose). Only a real multi-iteration dialectic exposes it — see OPS-NOTES.md
 # "Prove Honcho really remembers" and re-run it if you ever change this value.
 #
-# Hermes' OWN chat is unaffected and correctly runs gemini-3.7-flash: it does not use
+# Hermes' OWN chat is unaffected and correctly runs gemini-3.8-flash: it does not use
 # this shim, and its Vertex provider round-trips thought signatures properly (proved
-# 2026-08-18 with a real tool-using agent turn that wrote a file on the VM).
+# 2026-08-18 with a real tool-using agent turn that wrote a file on the VM — that proof
+# was taken on 3.7-flash, which is the same provider path and the same thinking-model
+# family; RE-RUN the OPS-NOTES tool-call check on 3.8-flash when the install is next
+# built, since only a live tool-using turn can confirm it).
 export HONCHO_MODEL="google/gemini-2.5-flash"
 export HONCHO_EMBED_MODEL="gemini-embedding-001"
 
