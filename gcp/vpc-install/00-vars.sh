@@ -46,10 +46,41 @@ export IMAGE_FAMILY="ubuntu-2604-lts-amd64"
 export IMAGE_PROJECT="ubuntu-os-cloud"
 
 # ---------------------------------------------------------------------------
-# Service account (no key files — the VM uses its attached SA via ADC)
+# Service account for the VM (no key file — the VM uses its attached SA via ADC)
 # ---------------------------------------------------------------------------
 export SA_NAME="hermes-agent"
 export SA_EMAIL="${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
+
+# ---------------------------------------------------------------------------
+# Service account for the LOCAL gateway tunnel  (this one DOES use a key file)
+# ---------------------------------------------------------------------------
+# Why a key here when the rest of this install deliberately has none:
+#
+# The gateway tunnel runs as a LaunchAgent on your Mac, and `gcloud compute
+# start-iap-tunnel` needs a credential. Granting IAP tunnel access to the human
+# operator (which 01-gcp-setup.sh also does, for `hermesctl` and SSH) is not
+# enough for an unattended daemon: Google Cloud enforces a periodic
+# **reauthentication** on user credentials, and reauth is by definition
+# interactive. A background job hits
+#
+#   Reauthentication failed. cannot prompt during non-interactive execution.
+#
+# and there is no supervisor, timeout or retry that can answer that prompt. Hit
+# live on 2026-09-04. A service-account credential is exempt from reauth, so the
+# tunnel survives a week of idle and a reboot without a human touching it.
+#
+# Scope is deliberately minimal: this SA gets ONLY roles/iap.tunnelResourceAccessor
+# (open a tunnel to an instance) — no SSH, no Vertex, no storage. It is NOT the VM's
+# SA above, whose roles would be over-granted for a laptop.
+#
+# The key is generated at install time into TUNNEL_SA_KEY at mode 0600, is
+# .gitignore'd, and is never committed. Set TUNNEL_USE_SA="false" to fall back to
+# the operator's own credentials — the tunnel then works, but dies at every
+# reauth window until a human runs `gcloud auth login`.
+export TUNNEL_USE_SA="true"
+export TUNNEL_SA_NAME="hermes-tunnel"
+export TUNNEL_SA_EMAIL="${TUNNEL_SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
+export TUNNEL_SA_KEY="${HOME}/.config/gcloud/hermes-tunnel-sa.json"
 
 export MEMORY_BUCKET="gs://${PROJECT_ID}-hermes-memory"
 
