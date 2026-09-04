@@ -959,6 +959,11 @@ Proves the whole chain in one shot: model reachable, **tool-calling works on the
 model**, and the filesystem it touches is the VM's. Used on 2026-08-18 to verify
 `gemini-3.7-flash` really tool-calls, not just answer.
 
+⚠️ **Re-run this after the 0.17.0 default moved to `gemini-3.8-flash`.** The 3.8 model id
+and its `global` availability were re-probed on 2026-09-04, but a `:generateContent` 200
+only proves the model answers — it does **not** prove the thought-signature round-trip
+that tool-calling depends on. This check is the one that does.
+
 ### "Prove Honcho really remembers" (end-to-end, not liveness)
 
 Port checks and single-shot shim completions both pass on a **completely dead** dialectic

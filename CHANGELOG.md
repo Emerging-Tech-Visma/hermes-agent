@@ -42,6 +42,72 @@ version: [CONTRIBUTING.md](CONTRIBUTING.md) has the mechanics.
 
 ---
 
+## [0.17.0] — 2026-09-04
+
+### Changed
+
+- **Default chat model is now `gemini-3.8-flash`** (was `gemini-3.7-flash`). The catalog
+  is `{google/gemini-3.8-flash (default), google/gemini-3.5-flash}`; `gemini-3.5-flash`
+  remains the switchable, **strict-EU-capable** fallback. Only `HERMES_MODEL` /
+  `HERMES_MODELS` in `00-vars.sh` change — `config.yaml` is templated from them, and
+  `03-verify.sh` derives the probe target from `$HERMES_MODEL`, so nothing else moved.
+
+- **`VERTEX_REGION` stays `global`, and the EU-residency exception is unchanged.**
+  `gemini-3.8-flash` has exactly the same availability shape as 3.7 and 3.6: 404 at
+  every European regional endpoint, 200 only at `global`. This upgrade neither widens
+  nor narrows the residency posture. Re-probed 2026-09-04 (`:generateContent` POST):
+
+  | Model | eu-w1 | eu-w2 | eu-w3 | eu-w4 | eu-n1 | global |
+  |---|---|---|---|---|---|---|
+  | `gemini-3.8-flash` | 404 | 404 | 404 | 404 | 404 | **200** |
+  | `gemini-3.7-flash` | 404 | 404 | 404 | 404 | 404 | **200** |
+  | `gemini-3.6-flash` | 404 | 404 | 404 | 404 | 404 | **200** |
+  | `gemini-3.5-flash` | 404 | **200** | **200** | 404 | 404 | **200** |
+  | `gemini-3.5-flash-lite` | 404 | 404 | 404 | 404 | 404 | **200** |
+  | `gemini-2.5-flash` | **200** | **200** | **200** | **200** | **200** | **200** |
+
+  Every row other than 3.8 is byte-identical to the 2026-08-18 probe — the run reproduced
+  the known-good result, which is what makes the new row trustworthy.
+
+- **Cost estimate revised down while introductory pricing lasts.** `gemini-3.8-flash` is
+  **$0.75 / $3.75** per 1M input / output tokens at `global` through **2026-12-31**, then
+  **$1.50 / $7.50** from **2027-01-01** — the latter being exactly what 3.7-flash costs
+  today. The token line moves ~$75–180 → **~$40–90**, taking the line-item sum from
+  $234–367 to **$199–277** (tabled as ~$200–275, matching how the previous estimate
+  rounded). On 2027-01-01 the model line doubles back with no action required.
+  Non-`global` endpoints carry a ~10% premium. Source: the
+  [Vertex AI pricing page](https://cloud.google.com/vertex-ai/generative-ai/pricing),
+  read 2026-09-04.
+
+### Verified
+
+- **The model id is real, proved the strong way.** The `global` 200 echoed
+  `"modelVersion": "gemini-3.8-flash"`, matching the requested id — a 200 alone would not
+  have settled it. Negative control run alongside: `gemini-3.9-flash`,
+  `gemini-3.8-flash-lite` and `gemini-3.8-pro` **all 404 at `global`**, so 3.8 currently
+  ships as a flash tier only, with no `-lite` or `-pro` sibling on Vertex.
+
+### Fixed
+
+- **The repo-map row in `README.md` still read "Currently **0.14.3**"** while the version
+  badge four lines up read 0.16.1 — stale since 0.14.4. Now tracks the badge.
+
+- **`INSTALL.md` §2 and `gcp/vpc-install/README.md` both stated Honcho runs on
+  `gemini-3.5-flash`.** It does not, and must not — `00-vars.sh` sets
+  `HONCHO_MODEL=google/gemini-2.5-flash`, and §7 of the same document explains at length
+  why any Gemini 3.x model 400s every dialectic query (dropped `thought_signature`). The
+  summary tables contradicted the source of truth they were summarising. Both corrected.
+
+### Not yet validated
+
+- ⚠️ **This has not been rebuilt from a virgin install.** The 3.8 evidence is an API fact,
+  not an install fact: as of 2026-09-04 the live box still runs 3.7-flash, and neither
+  `03-verify.sh` nor the live tool-calling turn has been re-run on 3.8. A
+  `:generateContent` 200 proves the model answers — it does **not** exercise the
+  thought-signature round-trip that tool-calling depends on, which is the failure mode
+  that already bit `HONCHO_MODEL`. Per the from-scratch rule in `AGENTS.md`, run
+  `teardown.sh` → full install → `03-verify.sh` → the OPS-NOTES tool-call check before
+  treating 3.8 as validated. `HONCHO_MODEL` is untouched and stays on `gemini-2.5-flash`.
 ## [0.16.2] — 2026-09-01
 
 ### Fixed — the gateway failure that reports itself as healthy
