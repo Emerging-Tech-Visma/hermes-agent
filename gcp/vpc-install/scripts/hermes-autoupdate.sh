@@ -110,7 +110,14 @@ VERIFY="${HOME}/hermes-install/03-verify.sh"
 if [ -x "${VERIFY}" ] || [ -f "${VERIFY}" ]; then
   log "running post-update verification"
   sleep 15    # let the dashboard and gateway finish coming back
-  if bash "${VERIFY}" 2>&1 | sed 's/^/    /'; then
+  # Tell 03-verify.sh that WE are running it. Two of its checks assert on the
+  # autoupdate's own state (the timer's next elapse, and whether a previous run
+  # failed); both are circular from in here — the timer has no next elapse while this
+  # service is executing, and our previous outcome is what we are about to overwrite.
+  # Asserting them anyway made every successful update report failure, and latched:
+  # the marker we write on failure guaranteed the next run failed too. See CHANGELOG
+  # 0.18.0.
+  if HERMES_VERIFY_FROM_AUTOUPDATE=1 bash "${VERIFY}" 2>&1 | sed 's/^/    /'; then
     log "post-update verification PASSED"
     date -u +%Y-%m-%dT%H:%M:%SZ > "${STAMP_DIR}/last-success"
     rm -f "${STAMP_DIR}/last-failure" "${STAMP_DIR}/pending"

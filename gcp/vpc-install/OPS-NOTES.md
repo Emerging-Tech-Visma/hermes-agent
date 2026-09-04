@@ -1140,6 +1140,8 @@ gcloud projects remove-iam-policy-binding test-disco-cm \
 | Symptom | Cause / fix |
 |---|---|
 | All services dead after logout | `linger` off → `sudo loginctl enable-linger $USER` (§2d) |
+| Every turn: "agent init failed: Vertex AI credentials could not be resolved" | the VM's service account was **deleted and recreated** — same email, new unique id, and the instance is bound to the id. `errors.log` shows `401 "Service account is deleted or disabled."` Undelete the ORIGINAL identity (§12) — no VM restart needed |
+| `hermes-autoupdate.service` failed but Hermes updated fine | fixed in 0.18.0. Pre-0.18.0 `03-verify.sh` failed on the autoupdate's own state, and one failure latched forever. Update the install, then `rm ~/.hermes/autoupdate/last-failure` + `systemctl --user reset-failed hermes-autoupdate.service` |
 | Desktop app: "Remote gateway incomplete" | dashboard bound to `127.0.0.1` → auth is OFF. Must be `0.0.0.0` (§1) |
 | Desktop app: can't sign in, no error | duplicate `HERMES_DASHBOARD_BASIC_AUTH_*` lines in `.env` → re-run `dashboard-setup.sh` (§5) |
 | Sign-in works, then fails ~12h later | session TTL — sign out and in. Not a fault (§7) |
@@ -1320,3 +1322,74 @@ bash ~/hermes-install/03-verify.sh                                      # what i
 
 Hermes takes a pre-update backup by default (do **not** pass `--no-backup` in the timer).
 Rollback and re-install paths are in §3.
+
+---
+
+## 12. "Vertex AI credentials could not be resolved" — a deleted service account
+
+Symptom: **every** agent turn fails at init, the desktop app blames Vertex, and
+`~/.hermes/logs/errors.log` on the VM shows
+
+```
+agent.vertex_adapter: Failed to resolve Vertex AI credentials: ... Status: 401
+Response: b'"Service account is deleted or disabled."'
+```
+
+Confirm it in one call — this is the honest check, because the metadata server still
+serves the SA **email** from static instance config even when the identity is gone:
+
+```bash
+curl -s -o /dev/null -w "%{http_code}\n" -H "Metadata-Flavor: Google" \
+  "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token"
+```
+
+`401` confirms it. `gcloud auth print-access-token` on the VM also fails.
+
+**Why recreating the account does not fix it.** A GCE instance is bound to the service
+account's **unique id**, not its email. `01-gcp-setup.sh` is idempotent and will happily
+recreate `hermes-agent@` — with a *new* id. The instance keeps asking for the old one, so
+the 401 persists forever, and `gcloud iam service-accounts describe` reports the account as
+present and enabled the whole time. That combination is what makes this so confusing.
+
+### Fix A — undelete the original (no downtime, 30-day window)
+
+Find the deleted id in the audit log, then free the email and undelete:
+
+```bash
+gcloud logging read 'protoPayload.methodName="google.iam.admin.v1.DeleteServiceAccount"' \
+  --project="${PROJECT_ID}" --limit=5 \
+  --format="value(timestamp,protoPayload.authenticationInfo.principalEmail,protoPayload.resourceName)"
+```
+
+```bash
+gcloud iam service-accounts delete "${SA_EMAIL}" --project="${PROJECT_ID}" --quiet \
+  && gcloud iam service-accounts undelete <ORIGINAL_UNIQUE_ID> --project="${PROJECT_ID}"
+```
+
+The metadata server recovers **immediately** — no stop/start. Verify with the `curl` above
+(expect `200`), then `systemctl --user restart vertex-openai-proxy hermes-gateway
+hermes-dashboard` so nothing keeps serving a cached credential failure. Confirmed working
+2026-09-04: token `200` on the first poll, and Vertex errors stopped inside three minutes.
+
+`undelete` returns `FAILED_PRECONDITION` if the email is still occupied — that is the
+delete-first step, not a real failure.
+
+### Fix B — re-attach (needs a stopped VM)
+
+```bash
+gcloud compute instances stop "${VM_NAME}" --zone="${ZONE}" \
+  && gcloud compute instances set-service-account "${VM_NAME}" --zone="${ZONE}" \
+       --service-account="${SA_EMAIL}" --scopes=cloud-platform \
+  && gcloud compute instances start "${VM_NAME}" --zone="${ZONE}"
+```
+
+Use this past the 30-day undelete window. It costs downtime on a box that is meant to run
+24/7, so prefer A.
+
+### Prevention
+
+`teardown.sh` refuses to run against a `RUNNING` instance since 0.18.0 (override:
+`--yes-destroy-live`). To exercise teardown safely, point `00-vars.sh` at a throwaway
+`PROJECT_ID`/`VM_NAME` — **not** at the live install. Re-granting roles is not enough on
+its own: role bindings follow the email, but the instance's binding follows the id.
+
