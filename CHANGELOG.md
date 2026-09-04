@@ -42,6 +42,35 @@ version: [CONTRIBUTING.md](CONTRIBUTING.md) has the mechanics.
 
 ---
 
+
+## [0.17.3] — 2026-09-04
+
+### Added — README: what to do when you can't connect
+
+0.17.1 split the two credentials — the tunnel moved to the `hermes-tunnel` service account
+while `hermesctl` kept running as the operator — and 0.17.2 explained the split in
+`OPS-NOTES.md` §7a. But the README, which is the front door and the only page most people
+read, still implied a single answer. The practical consequence: `gcloud auth login` is now
+the fix for **one** of the two and does **nothing** for the other, and there was no
+front-page guidance on telling them apart.
+
+New **"When you can't connect"** section under *Everyday commands*, built around the one
+check that distinguishes the cases — `curl localhost:9119`, because a bound-but-not-
+forwarding tunnel looks alive to every process- and port-based check:
+
+- **302** — tunnel healthy; if the app still fails it is the app or the password, and
+  `gcloud auth login` will not help.
+- **000** — tunnel not forwarding; wait, then `launchctl kickstart`, then read the log.
+- **`Reauthentication failed` from `hermesctl` while the app works** — that is the split,
+  not a broken tunnel.
+
+### Corrected
+
+- Documented that a **cold tunnel start has taken over two minutes** to first answer.
+  Observed repeatedly on 2026-09-04 while verifying 0.17.1. This matters because the
+  obvious reaction to a slow start is to conclude the tunnel is dead and start
+  re-installing — the README now says to wait first. The supervisor's 45s threshold applies
+  to a *running* tunnel that stops forwarding, not to first connect.
 ## [0.17.2] — 2026-09-04
 
 ### Fixed — teardown left the tunnel service account behind
