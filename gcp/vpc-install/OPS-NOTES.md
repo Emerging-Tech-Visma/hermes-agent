@@ -623,7 +623,16 @@ used to go dark after idle and needed `gcloud auth login`. Service-account crede
 exempt from reauth, so the tunnel now survives a week of idle and a reboot untouched.
 
 **`gcloud auth login` is therefore NOT the fix for a dead tunnel any more.** The supervisor's
-log and notification will say so. Check instead:
+log and notification will say so.
+
+**It is still the fix for `hermesctl`.** Only the tunnel moved to the service account.
+`hermesctl ssh` / `status` / `logs` / `update` all run `gcloud compute ssh
+--tunnel-through-iap` as **you**, so they still hit the reauth wall after idle even while the
+desktop app keeps working — the app and the CLI now fail independently. If `hermesctl` errors
+with `Reauthentication failed` but `curl localhost:9119` returns 302, that is this split, not
+a broken tunnel: run `gcloud auth login` and `hermesctl` works again, tunnel untouched.
+
+For a dead tunnel, check instead:
 
 ```bash
 # Is the key still good? (should print a token)

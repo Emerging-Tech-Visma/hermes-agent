@@ -42,6 +42,45 @@ version: [CONTRIBUTING.md](CONTRIBUTING.md) has the mechanics.
 
 ---
 
+## [0.17.2] — 2026-09-04
+
+### Fixed — teardown left the tunnel service account behind
+
+0.17.1 added the `hermes-tunnel` service account and a local key, but **`teardown.sh` was
+never taught about either**. A teardown-then-rebuild — this repo's own mandated validation
+path — therefore left:
+
+- an **orphan service account still holding `roles/iap.tunnelResourceAccessor`** on the
+  project, invisible in `gcloud compute instances list`, so the "confirm it really is virgin"
+  check passed while it was still there; and
+- a **stale key file** on the Mac, which the installer's "Reusing existing tunnel key" branch
+  would have handed straight to launchd — a key whose service account no longer exists.
+
+Teardown now deletes the tunnel SA alongside the VM's, removes `${TUNNEL_SA_KEY}` locally,
+and lists both in the typed-confirmation preview so nothing is destroyed unannounced. Found
+by review immediately after 0.17.1 shipped, not by a rebuild — the virgin-install rule exists
+because this is exactly the class of defect that hides from incremental re-runs.
+
+### Fixed — `gcloud auth login` guidance contradicted itself
+
+0.17.1's new §7a says `gcloud auth login` is *not* the fix for a dead tunnel; 0.16.2's entry
+says an expired credential breaks *all* of `hermesctl` and to run exactly that. Both are
+true — the tunnel moved to a service account, **`hermesctl` did not** — but side by side they
+read as a contradiction. §7a now states the split explicitly: the desktop app and the CLI
+now fail **independently**, and `Reauthentication failed` from `hermesctl` while
+`curl localhost:9119` returns 302 is that split, not a broken tunnel.
+
+### Corrected
+
+- `teardown.sh` still told the operator the rebuild "must be 13/13". The suite grew to
+  **14** checks in 0.15.0. Same stale-count class as the 0.16.1 README defect.
+
+### Verified
+
+- `constraints/iam.serviceAccountKeyExpiryHours` on `test-disco-cm` is **`allowAll`** — no
+  key-expiry limit is enforced, so 0.17.1's "survives a week of idle" has no hidden shelf
+  life from org policy. Probed 2026-09-04 via the Org Policy API.
+
 ## [0.17.1] — 2026-09-04
 
 ### Fixed — the gateway tunnel now authenticates as a service account, so idle no longer kills it

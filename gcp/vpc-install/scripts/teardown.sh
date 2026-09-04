@@ -40,6 +40,7 @@ if [ "${VM_ONLY}" != "yes" ]; then
   echo "    Cloud Router     ${ROUTER_NAME}"
   echo "    subnet / VPC     ${SUBNET_NAME} / ${VPC_NAME}"
   echo "    service account  ${SA_EMAIL}"
+  echo "    service account  ${TUNNEL_SA_EMAIL}   (+ its key on this Mac)"
 fi
 if [ "${WITH_BUCKET}" = "yes" ]; then
   echo "    BUCKET           ${MEMORY_BUCKET}  <-- ⚠️  DESTROYS ALL MEMORY BACKUPS"
@@ -85,6 +86,18 @@ if [ "${VM_ONLY}" != "yes" ]; then
 
   echo "==> Deleting service account ${SA_EMAIL}"
   gcloud iam service-accounts delete "${SA_EMAIL}" --quiet 2>/dev/null || gone
+
+  # The tunnel SA must go too, or teardown leaves an orphan holding a live
+  # roles/iap.tunnelResourceAccessor grant on the project. Deleting the SA also
+  # invalidates its keys server-side — but the key FILE stays on this Mac, and the
+  # installer's "Reusing existing tunnel key" path would then hand launchd a key
+  # whose service account no longer exists. So remove both.
+  echo "==> Deleting tunnel service account ${TUNNEL_SA_EMAIL}"
+  gcloud iam service-accounts delete "${TUNNEL_SA_EMAIL}" --quiet 2>/dev/null || gone
+  if [ -f "${TUNNEL_SA_KEY}" ]; then
+    rm -f "${TUNNEL_SA_KEY}"
+    echo "    removed the local key ${TUNNEL_SA_KEY}"
+  fi
 fi
 
 if [ "${WITH_BUCKET}" = "yes" ]; then
@@ -114,7 +127,7 @@ Then install from zero:
   bash 01-gcp-setup.sh
   gcloud compute ssh ${VM_NAME} --zone=${ZONE} --tunnel-through-iap
   bash ~/hermes-install/02-vm-install.sh
-  bash ~/hermes-install/03-verify.sh          # must be 13/13
+  bash ~/hermes-install/03-verify.sh          # must be 14/14
   bash scripts/install-gateway-launchagent.sh # back on your PC
 
 Record the date, the Hermes version and the Honcho SHA in AGENTS.md when you do.
