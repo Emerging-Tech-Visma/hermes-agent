@@ -19,15 +19,57 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 source "${HERE}/../00-vars.sh"
 
-WITH_BUCKET="no"; VM_ONLY="no"
+WITH_BUCKET="no"; VM_ONLY="no"; DESTROY_LIVE="no"
 for arg in "$@"; do
   case "${arg}" in
-    --with-bucket) WITH_BUCKET="yes" ;;
-    --vm-only)     VM_ONLY="yes" ;;
-    -h|--help)     sed -n '2,12p' "$0"; exit 0 ;;
+    --with-bucket)      WITH_BUCKET="yes" ;;
+    --vm-only)          VM_ONLY="yes" ;;
+    --yes-destroy-live) DESTROY_LIVE="yes" ;;
+    -h|--help)          sed -n '2,12p' "$0"; exit 0 ;;
     *) echo "unknown flag: ${arg}" >&2; exit 2 ;;
   esac
 done
+
+# ---------------------------------------------------------------------------
+# Guard: this repo's install is ALSO somebody's running agent.
+# ---------------------------------------------------------------------------
+# The typed confirmation below is not a real barrier for an automated caller — it reads
+# from stdin, so `echo "${VM_NAME}" | teardown.sh` sails straight through it. That is
+# exactly how destructive code gets "tested" against a live project.
+#
+# On 2026-09-04 the VM's service account was deleted at 12:31:11 UTC and recreated 21
+# seconds later while validating teardown changes. Recreating it gave the SAME EMAIL a
+# NEW unique id, and the instance is bound to the id — so the metadata server returned
+# 401 "Service account is deleted or disabled" indefinitely, every Vertex call failed,
+# and the agent was dead until the ORIGINAL identity was undeleted. The VM survived; the
+# thing that made it useful did not.
+#
+# So: a RUNNING instance is treated as the live install and requires explicit intent.
+# A stopped or absent VM tears down as before.
+if [ "${DESTROY_LIVE}" != "yes" ]; then
+  LIVE_STATUS="$(gcloud compute instances describe "${VM_NAME}" --zone="${ZONE}"                    --project="${PROJECT_ID}" --format='value(status)' 2>/dev/null || true)"
+  if [ "${LIVE_STATUS}" = "RUNNING" ]; then
+    cat >&2 <<EOF
+============================================================================
+REFUSING — ${VM_NAME} in ${PROJECT_ID} is RUNNING.
+
+A running instance is a live agent: real conversations, real memory on its disk,
+and a service account other things authenticate as. Tearing it down is not a
+test, and the typed prompt below would not have stopped a script.
+
+If you are certain, say so explicitly:
+
+  bash teardown.sh --yes-destroy-live $*
+
+To test teardown safely, point 00-vars.sh at a throwaway PROJECT_ID/VM_NAME, or
+stop the VM first (hermesctl vm stop) so this guard steps aside.
+
+Nothing was deleted.
+============================================================================
+EOF
+    exit 1
+  fi
+fi
 
 echo "============================================================================"
 echo "TEARDOWN — project ${PROJECT_ID}"

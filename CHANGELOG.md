@@ -43,6 +43,78 @@ version: [CONTRIBUTING.md](CONTRIBUTING.md) has the mechanics.
 ---
 
 
+
+## [0.18.0] — 2026-09-04
+
+### Fixed — the weekly update reported failure every week while succeeding every week
+
+`hermes-autoupdate.service` sat in `failed` for five days. The updates themselves were
+**working**: the 2026-08-30 run installed Hermes v0.20.6, restarted the gateway and the
+dashboard, and passed 13 checks including shim chat, embeddings and Honcho end-to-end
+recall. It then exited 1 on two checks — **both of which assert on the autoupdate's own
+state, and are circular when the autoupdate is what is running them.** Both were
+introduced by check 14 in 0.15.0.
+
+**1. The latch.** `03-verify.sh` failed if `~/.hermes/autoupdate/last-failure` exists — and
+the updater *writes that marker when verification fails*. So the first bad Sunday
+(2026-08-23) guaranteed every later Sunday failed on the marker alone, wrote the marker
+again, and never reached the `rm -f last-failure` that a success performs. Self-sustaining,
+and invisible: the box kept updating.
+
+Note a **timestamp comparison does not fix this** — once latched, `last-failure` is always
+newer than `last-success`. The updater is about to record this run's outcome, so its
+previous outcome is not evidence about the install. It is now skipped when the updater is
+the caller, and still a hard FAIL for a human or `hermesctl`, which is who that warning is
+for.
+
+**2. The timer check could not pass.** The check failed when `hermes-autoupdate.timer` has
+no next elapse — but while `hermes-autoupdate.service` is *executing*, its own timer
+legitimately has none. Guaranteed to fail from inside the update, and says nothing about
+the install.
+
+`hermes-autoupdate.sh` now passes `HERMES_VERIFY_FROM_AUTOUPDATE=1`, and `03-verify.sh`
+gained a `skip()` state so the count stays honest instead of quietly passing. Deliberately
+an env marker rather than "is the service active" — a standalone run during a concurrent
+update would wrongly skip a check that should pass.
+
+### Added — `teardown.sh` refuses to destroy a RUNNING install
+
+The typed confirmation was never a barrier to an automated caller: it reads stdin, so
+`echo "${VM_NAME}" | teardown.sh` sails through it. That is how destructive code gets
+"tested" against a live project.
+
+**What it cost, on 2026-09-04:** the VM's service account was deleted at 12:31:11 UTC and
+recreated 21 seconds later while teardown changes were being validated. The recreated
+account has the **same email but a new unique id**, and a GCE instance is bound to the
+*id* — so the metadata server returned `401 "Service account is deleted or disabled."`
+indefinitely, `agent.vertex_adapter` could not resolve credentials, and **every turn failed
+with "agent init failed"** while the desktop app blamed Vertex. The VM never stopped; the
+identity that made it useful was gone.
+
+`teardown.sh` now refuses when the target instance is `RUNNING` and requires
+`--yes-destroy-live`, naming the safe alternatives (a throwaway `PROJECT_ID`/`VM_NAME`, or
+stopping the VM first). Verified both directions: the exact `echo hermes-agent |
+teardown.sh` invocation is refused with exit 1 (also with `--vm-only`), and an absent or
+non-running target reaches the confirmation prompt exactly as before.
+
+**Recovery, for the record:** `gcloud iam service-accounts undelete <ORIGINAL_UNIQUE_ID>`
+restores the identity the instance is still bound to, so the metadata server works again
+**with no stop/start** — the email must be freed first by deleting the replacement.
+`gcloud compute instances set-service-account` is the alternative and needs a stopped VM.
+
+### Verified — re-probed live, 2026-09-04
+
+| Check | Result |
+|---|---|
+| `03-verify.sh` standalone | **14 passed, 0 failed** |
+| `03-verify.sh` as the updater runs it, against the real latched marker | **14 passed, 0 failed, 1 skipped** (was: 1 failed, forever) |
+| Vertex `:generateContent` @ `global` | `gemini-3.8-flash`, `3.7-flash`, `3.5-flash` — all **HTTP 200** |
+| Hermes on the box | **v0.21.0** (`2026.8.31`) — badge and CLAUDE.md said v0.20.4/v0.20.5 |
+| Gateway through the tunnel | **HTTP 302** |
+
+The 2026-08-18 from-scratch rebuild block in `gcp/vpc-install/README.md` is a dated
+historical record and was left as written; only the re-probe lines were updated. Same
+discipline the 0.16.1 entry had to correct after a blanket find/replace rewrote history.
 ## [0.17.3] — 2026-09-04
 
 ### Added — README: what to do when you can't connect

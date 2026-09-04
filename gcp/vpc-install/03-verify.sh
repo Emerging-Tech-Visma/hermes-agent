@@ -1,12 +1,22 @@
 #!/usr/bin/env bash
 # Run ON THE VM. End-to-end health check — targets 14/14 pass.
+# When hermes-autoupdate.sh runs this (HERMES_VERIFY_FROM_AUTOUPDATE=1) two checks are
+# SKIPPED rather than asserted, because they are about the autoupdate's own state and
+# are circular from inside it: 14/0/1-or-2-skipped is a pass there. See CHANGELOG 0.18.0.
 set -uo pipefail
 source "$(dirname "$0")/00-vars.sh"
 export PATH="${HOME}/.local/bin:${PATH}"
 
-PASS=0; FAIL=0
+PASS=0; FAIL=0; SKIP=0
 ok()   { echo "  PASS  $1"; PASS=$((PASS+1)); }
 bad()  { echo "  FAIL  $1"; FAIL=$((FAIL+1)); }
+skip() { echo "  SKIP  $1"; SKIP=$((SKIP+1)); }
+
+# Set by hermes-autoupdate.sh when it runs this script as its post-update check.
+# Two checks below are about the AUTOUPDATE's own state, and asserting on them from
+# inside the autoupdate is circular — see the comments at each. Standalone runs (a
+# human, or `hermesctl`) still make both assertions.
+FROM_AUTOUPDATE="${HERMES_VERIFY_FROM_AUTOUPDATE:-0}"
 
 echo "=== Hermes on GCP — verification ==========================="
 
@@ -270,19 +280,42 @@ if [ "${AUTOUPDATE_ENABLE:-false}" = "true" ]; then
       WHEN="$(systemctl --user list-timers hermes-autoupdate.timer --no-pager 2>/dev/null | sed -n '2p' | awk '{print $1, $2, $3}')"
       ok "autoupdate timer armed (${AUTOUPDATE_MODE:-apply} mode, next ${WHEN:-scheduled})"
     else
-      bad "hermes-autoupdate.timer is active but has NO next elapse — check AUTOUPDATE_SCHEDULE with: systemd-analyze calendar '${AUTOUPDATE_SCHEDULE:-}'"
+      # While hermes-autoupdate.service is EXECUTING, its own timer legitimately has
+      # no next elapse — so this assertion is guaranteed to fail when the updater runs
+      # us, and says nothing about the install. It made every successful update report
+      # failure. Assert it only on a standalone run.
+      if [ "${FROM_AUTOUPDATE}" = "1" ]; then
+        skip "autoupdate timer next-elapse (not assertable from inside the update run)"
+      else
+        bad "hermes-autoupdate.timer is active but has NO next elapse — check AUTOUPDATE_SCHEDULE with: systemd-analyze calendar '${AUTOUPDATE_SCHEDULE:-}'"
+      fi
     fi
   else
     bad "hermes-autoupdate.timer not active — run: systemctl --user enable --now hermes-autoupdate.timer"
   fi
-  # Surface a previous failed run rather than letting it rot silently.
+  # Surface a previous failed run rather than letting it rot silently — but NOT when the
+  # updater is running us. THE LATCH: the updater writes last-failure when this script
+  # fails, so once any run failed, every later run failed on that marker alone, wrote the
+  # marker again, and never reached the `rm -f last-failure` that a success performs. One
+  # bad Sunday disabled the check permanently while the updates themselves kept working.
+  # Note a timestamp comparison does NOT break this — last-failure is always newer than
+  # last-success once latched. The updater is about to record this run's own outcome, so
+  # its prior outcome is not evidence about the install.
   if [ -f "${HOME}/.hermes/autoupdate/last-failure" ]; then
-    bad "a previous autoupdate FAILED at $(cat "${HOME}/.hermes/autoupdate/last-failure") — journalctl --user -u hermes-autoupdate"
+    if [ "${FROM_AUTOUPDATE}" = "1" ]; then
+      skip "previous autoupdate outcome (this run is about to replace it)"
+    else
+      bad "a previous autoupdate FAILED at $(cat "${HOME}/.hermes/autoupdate/last-failure") — journalctl --user -u hermes-autoupdate"
+    fi
   fi
 else
   ok "autoupdate not requested (AUTOUPDATE_ENABLE=${AUTOUPDATE_ENABLE:-false})"
 fi
 
 echo "==========================================================="
-echo "  ${PASS} passed, ${FAIL} failed"
+if [ "${SKIP}" -gt 0 ]; then
+  echo "  ${PASS} passed, ${FAIL} failed, ${SKIP} skipped"
+else
+  echo "  ${PASS} passed, ${FAIL} failed"
+fi
 [ "${FAIL}" -eq 0 ] || exit 1

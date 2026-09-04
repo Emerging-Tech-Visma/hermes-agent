@@ -32,7 +32,7 @@ Desktop app / browser  ──IAP tunnel──►  GCE VM (no public IP, private 
 | Auth | one attached service account — **no key files anywhere** |
 | Cost | ~$200–275/month at moderate daily team use, while 3.8-flash is on introductory pricing — the model line doubles on 2027-01-01, see [INSTALL.md §11](INSTALL.md) |
 
-Verified against **Hermes Agent v0.20.4** (`2026.8.18`), GCP as of **2026-08-19**.
+Verified against **Hermes Agent v0.21.0** (`2026.8.31`), GCP as of **2026-09-04**.
 The installer pulls Hermes **unpinned** from upstream `install.sh`, so a fresh run gets
 whatever is current — re-probe `hermes --version` rather than trusting this line.
 

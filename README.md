@@ -5,16 +5,17 @@
 **A reproducible runbook for running a [Hermes Agent](https://hermes-agent.nousresearch.com)
 on Google Cloud — privately, EU-resident data, billed through your own project.**
 
-Live install probed **2026-08-19**: Hermes **v0.20.4**, Ubuntu 26.04 LTS, Chrome 151,
-Vertex **`gemini-3.7-flash`** @ `global` (+ `gemini-3.5-flash`), SearXNG and Honcho up,
-no external IP.
+Live install probed **2026-09-04**: Hermes **v0.21.0** (`2026.8.31`), Ubuntu 26.04 LTS,
+Chrome 151, Vertex **`gemini-3.8-flash`** @ `global` (+ `gemini-3.7-flash` and
+`gemini-3.5-flash`, all three HTTP 200), SearXNG and Honcho up, no external IP,
+`03-verify.sh` **14/14**.
 
 > **0.17.0 moves the default model to `gemini-3.8-flash`** (re-probed on Vertex
 > 2026-09-04). The live box above still runs 3.7-flash until the install is re-run —
 > this line will be updated when it is re-probed.
 
-[![version](https://img.shields.io/badge/version-0.17.3-blue)](CHANGELOG.md)
-[![Hermes](https://img.shields.io/badge/Hermes-v0.20.4-8A2BE2)](https://hermes-agent.nousresearch.com)
+[![version](https://img.shields.io/badge/version-0.18.0-blue)](CHANGELOG.md)
+[![Hermes](https://img.shields.io/badge/Hermes-v0.21.0-8A2BE2)](https://hermes-agent.nousresearch.com)
 [![data](https://img.shields.io/badge/data-europe--west2-green)](#eu-data-residency)
 [![inference](https://img.shields.io/badge/inference-vertex%20global-yellow)](#eu-data-residency)
 [![model](https://img.shields.io/badge/model-gemini--3.7--flash-orange)](#eu-data-residency)
