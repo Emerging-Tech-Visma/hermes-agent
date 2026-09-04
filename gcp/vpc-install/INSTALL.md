@@ -324,7 +324,14 @@ bash gcp/vpc-install/scripts/install-gateway-launchagent.sh
 
 It fills the plist placeholders from `00-vars.sh` and `which gcloud`, boots out any stale
 agent, loads the job, and waits until the gateway actually answers before reporting
-success. Verified 2026-08-18: killing the tunnel process had it back up in **~8s**.
+success.
+
+The agent runs **`scripts/gateway-tunnel-supervisor.sh`**, not `gcloud` directly — that
+matters. `start-iap-tunnel` binds the port and then, if its token cannot refresh, retries
+forever *without exiting*, so launchd's `KeepAlive` never fires and the port stays bound but
+dead. The supervisor probes over HTTP and restarts the tunnel when it stops forwarding, so a
+credential lapse self-heals as soon as you re-authenticate (with a macOS notification
+telling you to). It also rotates its own log — the old setup reached 27 MB. Verified 2026-08-18: killing the tunnel process had it back up in **~8s**.
 
 > **Why the default is the agent, not a manual tunnel.** A hand-started
 > `start-iap-tunnel` belongs to the shell that launched it and dies with that shell —
@@ -360,14 +367,25 @@ gcloud compute start-iap-tunnel hermes-agent 9119 \
 > An unauthenticated `GET /` returns **HTTP 302 → `/login`**. That is the auth gate
 > working, not a failure — don't chase it.
 
-**If the gateway will not come up**, check for a port fight before anything else — launchd
-does not surface a failed bind, it just respawns while the log fills with *"Address already
-in use"*:
+**If the gateway will not come up**, run `bash scripts/gateway-tunnel.sh --status` first —
+it distinguishes the two failures that look identical from the app.
+
+The one that fools everybody: **expired gcloud credentials**. The tunnel process keeps
+running and keeps the port bound, so `launchctl` reports status 0 and `lsof` shows a
+listener, while every forward fails — `curl localhost:9119` returns **HTTP 000** and the app
+says *"Could not reach the remote Hermes gateway while refreshing its WebSocket ticket."*
+Fix with `gcloud auth login`, then
+`launchctl kickstart -k gui/$(id -u)/com.hermes.gateway-tunnel`. Expect it periodically:
+Workspace reauth policies expire the credential on a schedule. Full write-up in
+[OPS-NOTES.md](OPS-NOTES.md).
+
+Otherwise check for a port fight — launchd does not surface a failed bind, it just respawns
+while the log fills with *"Address already in use"*:
 
 ```bash
 lsof -nP -iTCP:9119 -sTCP:LISTEN     # who holds the port
 launchctl list | grep -i hermes      # stale agents (status ≠ 0 means it is failing)
-tail -f /tmp/hermes-gateway-tunnel.log
+tail -f ~/Library/Logs/hermes-gateway-tunnel.log
 ```
 
 The pre-VPC install shipped a **`com.hermes.tunnel`** agent — an SSH `-L` tunnel to a VM in
@@ -388,7 +406,7 @@ Or just open **<http://localhost:9119>** in a browser — same backend, same log
 launchctl kickstart -k gui/$(id -u)/com.hermes.gateway-tunnel   # force reconnect
 bash gcp/vpc-install/scripts/install-gateway-launchagent.sh     # re-apply (idempotent)
 bash gcp/vpc-install/scripts/install-gateway-launchagent.sh --uninstall
-tail -f /tmp/hermes-gateway-tunnel.log
+tail -f ~/Library/Logs/hermes-gateway-tunnel.log
 ```
 
 Reconnect after wake takes ~20–40s (launchd `ThrottleInterval` + gcloud cold start), so

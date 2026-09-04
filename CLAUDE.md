@@ -12,7 +12,7 @@ install order, and the gotchas learned along the way — lives in **[AGENTS.md](
 ## Where things are
 
 - **[README.md](README.md)** — the front door: what gets built, quick start, repo map.
-- **[CHANGELOG.md](CHANGELOG.md)** — version history. Currently **0.16.1**.
+- **[CHANGELOG.md](CHANGELOG.md)** — version history. Currently **0.16.2**.
   **Add an entry here for any change to the installable configuration** (new service,
   changed default model/region/OS, new variant, re-probed facts). Keep the
   MAJOR/MINOR/PATCH rules stated at the top of that file.

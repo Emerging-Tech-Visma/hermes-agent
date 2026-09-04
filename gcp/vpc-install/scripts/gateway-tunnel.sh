@@ -19,12 +19,47 @@ VM_NAME="${VM_NAME:-hermes-agent}"
 ZONE="${ZONE:-europe-west2-b}"
 PORT="${DASHBOARD_PORT:-9119}"
 
+LOG="${HOME}/Library/Logs/hermes-gateway-tunnel.log"
+
 if [ "${1:-}" = "--status" ]; then
-  if curl -sS -o /dev/null -w '%{http_code}' "http://localhost:${PORT}/" 2>/dev/null | grep -qE '^(200|302|401)$'; then
-    echo "Gateway UP on localhost:${PORT}"
-    exit 0
+  CODE="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 8 \
+    "http://localhost:${PORT}/" 2>/dev/null || true)"
+  CODE="${CODE:-000}"
+  case "${CODE}" in
+    200|302|401)
+      # 302 -> /login is the normal unauthenticated answer.
+      echo "Gateway UP on localhost:${PORT} (HTTP ${CODE})"
+      exit 0 ;;
+  esac
+
+  echo "Gateway DOWN on localhost:${PORT} (HTTP ${CODE})"
+
+  # DISTINGUISH the two failures — they look identical from the app, which just says
+  # "could not reach the remote Hermes gateway", but the fixes are completely different.
+  #
+  # (a) nothing listening        -> the tunnel is not running at all.
+  # (b) listening but HTTP 000   -> the tunnel process is alive and BOUND, and simply
+  #     cannot forward. Overwhelmingly this is EXPIRED gcloud CREDENTIALS. This is the
+  #     dangerous one: `launchctl list` reports the agent as status 0 and the port is
+  #     held, so every "is it up?" check based on process or port liveness says HEALTHY
+  #     while nothing works. Only an actual HTTP request reveals it. (Hit 2026-08-19.)
+  if lsof -nP -iTCP:"${PORT}" -sTCP:LISTEN >/dev/null 2>&1; then
+    echo
+    echo "  A process IS listening on :${PORT} but the tunnel is not forwarding."
+    if grep -qiE "TokenRefreshError|Reauthentication failed|gcloud auth login" "${LOG}" 2>/dev/null; then
+      echo "  CAUSE: expired gcloud credentials (found in ${LOG})."
+      echo "  FIX:"
+      echo "    gcloud auth login"
+      echo "    launchctl kickstart -k gui/\$(id -u)/com.hermes.gateway-tunnel"
+    else
+      echo "  Check the log for the reason: tail -30 ${LOG}"
+      echo "  Expired credentials are the usual cause: gcloud auth login"
+    fi
+  else
+    echo
+    echo "  Nothing is listening on :${PORT} — the tunnel is not running."
+    echo "  Start it permanently:  bash scripts/install-gateway-launchagent.sh"
   fi
-  echo "Gateway DOWN on localhost:${PORT}"
   exit 1
 fi
 

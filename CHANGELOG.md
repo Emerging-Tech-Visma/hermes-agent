@@ -28,12 +28,163 @@ version: [CONTRIBUTING.md](CONTRIBUTING.md) has the mechanics.
 
 ## [Unreleased]
 
+- **Exercise the virgin-install rule at least once.** v0.14.1 added the rule and
+  `scripts/teardown.sh`, but it has **not yet been run**: the installer was validated by
+  restoring broken preconditions on a live VM, not by installing onto a virgin OS. Strongly
+  evidenced, not proven, for a from-zero install. Do a teardown → 01 → 02 → 03 pass and
+  record the date, Hermes version and Honcho SHA in `AGENTS.md`.
 - **Pin the Honcho clone.** `02-vm-install.sh` does `git clone --depth 1` of `main`,
   which pins nothing — every install gets a different Honcho.
 - Replace the plaintext dashboard password with a scrypt
   `HERMES_DASHBOARD_BASIC_AUTH_PASSWORD_HASH`.
 - Optional: `serpapi-mcp` as an *additional* MCP tool for true Google SERP data,
   alongside SearXNG rather than replacing it.
+
+---
+
+## [0.16.2] — 2026-09-01
+
+### Fixed — the gateway failure that reports itself as healthy
+
+Hit live on 2026-08-19, and **initially misattributed to an unrelated upgrade**. The desktop
+app showed *"Could not reach the remote Hermes gateway while refreshing its WebSocket
+ticket"* and **gateway offline**; Settings → Connection mode said *"Could not reach this
+gateway yet. Check the URL — the auth method will appear once it responds."*
+
+Cause: **expired gcloud credentials.** The tunnel process stays alive and keeps port 9119
+bound; it simply cannot forward, because `gcloud` can no longer mint a token. That makes it
+pathologically misleading:
+
+| Check | Says | Reality |
+|---|---|---|
+| `launchctl list \| grep hermes` | status **0** | process is running |
+| `lsof -iTCP:9119 -sTCP:LISTEN` | **bound** | accepts local connections |
+| `curl localhost:9119` | **HTTP 000** | ← the only honest check |
+
+The app connects at TCP level, then fails refreshing its WebSocket ticket — exactly what the
+message says. **Every process- or port-based liveness check reports HEALTHY.** Same lesson as
+`03-verify.sh` test 13: *liveness is not correctness.*
+
+#### The real defect: the tunnel could never recover, even after you re-authenticated
+
+`gcloud compute start-iap-tunnel` **binds the local port first**, and when its token later
+fails to refresh it **does not exit** — it retries internally, forever, holding the listener
+open. Caught in the act 2026-09-02: one process alive **1d 9h**, emitting **~1.5 auth errors
+per second**, having written a **27 MB / 413,000-line** log.
+
+`KeepAlive` only restarts a process that **dies**, so it never fired. And because the stuck
+process never re-reads credentials, **`gcloud auth login` did not fix it** — only a manual
+`launchctl kickstart` did. That is why the failure kept coming back and why it was
+repeatedly misattributed to whatever had changed most recently.
+
+- **`scripts/gateway-tunnel-supervisor.sh` (new)** — the LaunchAgent now runs this instead
+  of `gcloud` directly. It probes the tunnel **over HTTP** (the only check that separates
+  *forwarding* from *listening*) and kills and restarts the child after 45s of no
+  forwarding. When credentials have genuinely expired it stops the child, waits, and posts a
+  macOS notification naming the one command a human must run — then reconnects on its own
+  once you do. **Verified** by `SIGSTOP`ing the child to reproduce the exact zombie shape
+  (port bound, HTTP 000): detected and recovered in **~35s** with a new child.
+- **Logs moved out of `/tmp` to `~/Library/Logs/` and are rotated** (2 MB cap). The previous
+  setup pointed gcloud's raw stderr at a file nothing rotated, which is how it reached 27 MB.
+- **THE ACTUAL DEFECT: the tunnel could never recover, and `KeepAlive` could not help.**
+  `gcloud compute start-iap-tunnel` **binds the local port first**, and when its token later
+  fails to refresh it **does not exit** — it retries internally, forever, holding the
+  listener open. Measured 2026-09-02: one such process had been alive **1d 9h** logging ~1.5
+  `Reauthentication failed` errors per **second**, having written a **27 MB / 413k-line**
+  log. launchd's `KeepAlive` only restarts a process that *dies*, so it never fired — and
+  since the stuck process never re-read credentials, **`gcloud auth login` did not fix it
+  either.** Only a manual `launchctl kickstart` did. That is why this failure kept recurring
+  and kept looking like something else had broken.
+
+  **Fix: `scripts/gateway-tunnel-supervisor.sh`**, which the LaunchAgent now runs instead of
+  `gcloud` directly. It probes the tunnel **over HTTP** — the only check that distinguishes
+  forwarding from listening — and kills and restarts the child after 45s of not forwarding.
+  A credential lapse now self-heals the moment you re-authenticate, and while it is waiting
+  it sends a macOS notification naming the one command a human must run. It also rotates its
+  own log, and logs moved from `/tmp` to `~/Library/Logs/`.
+
+  Verified by `SIGSTOP`-ing the child to reproduce the exact zombie shape (port bound,
+  HTTP 000): detected and recovered in **~35s** with a new child.
+- **The supervisor is installed to `~/.local/bin/`, not referenced in the checkout.** The
+  first version pointed launchd at the script inside the repo working tree — and this repo's
+  own workflow uses **temporary per-agent git worktrees**, so cleaning one up deletes the
+  running supervisor and kills the gateway, failing in a way that looks exactly like the
+  credential fault it exists to fix. The installer now `install -m 0755`s it to
+  `~/.local/bin/hermes-gateway-tunnel-supervisor.sh` and passes `VM_NAME` / `ZONE` /
+  `PROJECT_ID` / `DASHBOARD_PORT` through the plist's `EnvironmentVariables`, because the
+  installed copy has no `00-vars.sh` beside it to source.
+
+  **It bit before this was true.** An earlier revision of this entry claimed the move was
+  "caught before it could bite, on 2026-09-02". It was not: the supervisor, the plist and
+  two commit messages were all written for `~/.local/bin`, but the **one line in
+  `install-gateway-launchagent.sh` that chooses the path was never changed** — it still
+  passed `${HERE}`. So the installed plist pointed at
+  `.claude/worktrees/hermes-flash-upgrade-test-44506f/…`, that worktree was reset to `main`
+  on **2026-09-04**, the script vanished, and launchd could no longer exec it: agent loaded,
+  `exit -15`, nothing listening on 9119, no log. The desktop app reported the same
+  *"Could not reach this gateway yet"* this entry is about — from a completely different
+  cause.
+
+  Two lessons, both already in this repo's rules and both ignored here: **a commit message
+  is not verification** (three artifacts described the fix; the code did one thing), and
+  **exercising a script from its own checkout does not test how it is installed** — the same
+  shape as the 0.16.1 `hermesctl` PATH defect. The installer now also **refuses to write a
+  plist that references its own checkout**, so this cannot regress silently.
+- **`hermesctl` now fails fast with the real fix.** Every VM-side command goes over the IAP
+  tunnel, so an expired credential breaks *all* of it — and breaks it confusingly, because
+  `gcloud compute ssh` returns **255**, which `vm()`'s retry loop treats as transient and
+  retries 3× before giving up on something no retry can fix. A `require_creds` preflight now
+  runs once per invocation and prints the two-command fix.
+- **`gateway-tunnel.sh --status` diagnoses instead of reporting up/down.** It separates
+  "nothing listening" (tunnel not running) from "listening but HTTP 000" (running, not
+  forwarding), greps the log for `TokenRefreshError`, and names the fix. Verified against the
+  real broken state — it identified the cause correctly.
+- **`install-gateway-launchagent.sh`** names the cause (credentials vs. port conflict)
+  instead of dumping 20 log lines.
+- Documented in `OPS-NOTES.md` and `INSTALL.md`, including that this **recurs by design**:
+  Workspace reauth policies expire the credential on a schedule, so a permanently-installed
+  LaunchAgent will meet it periodically. Not a fault in the install, and not upgrade-related.
+
+The fix, for the record:
+
+```bash
+gcloud auth login                                              # interactive, needs a browser
+launchctl kickstart -k gui/$(id -u)/com.hermes.gateway-tunnel   # pick up the new token
+```
+
+Confirmed on the live install: recovered to HTTP 302 in ~6s.
+
+---
+
+- **Log moved out of `/tmp`** to `~/Library/Logs/hermes-gateway-tunnel.log`, and the
+  supervisor **rotates it** (2 MB cap). The old setup pointed gcloud's raw stderr at a
+  `/tmp` file that nothing rotated, which is how it reached **27 MB / 413k lines** of the
+  same repeated auth error. All five references across `INSTALL.md`, `OPS-NOTES.md` and the
+  plist's own instructions were updated to the new path — a stale `tail -f` in a runbook is
+  worse than none, since it shows an empty file and looks like "no errors".
+
+---
+
+- **The supervisor and the plist had drifted out of step, and the pair as committed could
+  not start.** `762a5ad` moved the installed supervisor to `~/.local/bin` (correctly — a
+  LaunchAgent must not reference a git worktree), but two halves were left behind: the
+  supervisor still did `source "${HERE}/../00-vars.sh"` unconditionally, and the plist
+  template passed none of that config. In `~/.local/bin` there is no `00-vars.sh`, so
+  `VM_NAME` was unset and the script died instantly under `set -u` — **the gateway would
+  never come up from a clean install**.
+
+  This is the same shape as the fresh-install defects in 0.13.0: it works in a checkout,
+  because a checkout *does* have `00-vars.sh` beside the script, and only fails once
+  installed somewhere else. Fixed by making config arrive from the environment (the plist
+  now passes `VM_NAME`, `ZONE`, `PROJECT_ID`, `DASHBOARD_PORT`), with `00-vars.sh` used
+  only as a fallback when the script is run straight out of a repo. A missing config now
+  produces `ERROR: VM_NAME/ZONE/PROJECT_ID not set and no 00-vars.sh beside this script`
+  instead of a bare `unbound variable`.
+
+  Verified three ways: the isolated script with no config errors clearly; with config in
+  the environment it starts and launches its child; and a full
+  `install-gateway-launchagent.sh` run renders every placeholder, passes `plutil -lint`,
+  and reports the gateway UP on HTTP 302.
 
 ---
 

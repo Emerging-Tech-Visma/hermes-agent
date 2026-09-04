@@ -23,7 +23,7 @@ LABEL="com.hermes.gateway-tunnel"
 TEMPLATE="${HERE}/../configs/${LABEL}.plist"
 TARGET="${HOME}/Library/LaunchAgents/${LABEL}.plist"
 DOMAIN="gui/$(id -u)"
-LOG="/tmp/hermes-gateway-tunnel.log"
+LOG="${HOME}/Library/Logs/hermes-gateway-tunnel.log"
 
 if [ "$(uname -s)" != "Darwin" ]; then
   echo "ERROR: launchd is macOS-only. On Linux use a systemd --user unit instead." >&2
@@ -82,7 +82,65 @@ fi
 # --- Render the template --------------------------------------------------------
 echo "==> Writing ${TARGET}"
 mkdir -p "${HOME}/Library/LaunchAgents"
-sed -e "s|__GCLOUD__|${GCLOUD}|g" \
+# The LaunchAgent outlives the shell that installed it, so it must NEVER point at
+# this checkout: this repo's workflow uses temporary per-agent git worktrees, and
+# deleting one would delete the running supervisor out from under launchd. That is
+# not hypothetical — it happened on 2026-09-04, and the failure looks exactly like
+# the credential fault the supervisor exists to diagnose (agent loaded, nothing
+# listening on the port, no log).
+#
+# So: copy the supervisor to ~/.local/bin and point the plist THERE. The installed
+# copy has no 00-vars.sh beside it, which is why the plist carries VM_NAME/ZONE/
+# PROJECT_ID/DASHBOARD_PORT in EnvironmentVariables.
+SRC_SUPERVISOR="${HERE}/gateway-tunnel-supervisor.sh"
+if [ ! -f "${SRC_SUPERVISOR}" ]; then
+  echo "ERROR: missing ${SRC_SUPERVISOR}" >&2; exit 1
+fi
+# --- Tunnel credential -----------------------------------------------------------
+# A LaunchAgent cannot answer a reauth prompt, so the tunnel authenticates as a
+# service account. See the TUNNEL_USE_SA block in 00-vars.sh for the full reasoning.
+SA_KEY_FOR_PLIST=""
+if [ "${TUNNEL_USE_SA:-true}" = "true" ]; then
+  if [ ! -f "${TUNNEL_SA_KEY}" ]; then
+    echo "==> Creating the tunnel service-account key"
+    if ! gcloud iam service-accounts describe "${TUNNEL_SA_EMAIL}" \
+         --project="${PROJECT_ID}" >/dev/null 2>&1; then
+      echo "ERROR: service account ${TUNNEL_SA_EMAIL} does not exist." >&2
+      echo "       Run 01-gcp-setup.sh first (it creates and grants it)." >&2
+      exit 1
+    fi
+    mkdir -p "$(dirname "${TUNNEL_SA_KEY}")"
+    # umask so the key is never briefly world-readable between create and chmod.
+    ( umask 077
+      gcloud iam service-accounts keys create "${TUNNEL_SA_KEY}" \
+        --iam-account="${TUNNEL_SA_EMAIL}" --project="${PROJECT_ID}" >/dev/null )
+    chmod 600 "${TUNNEL_SA_KEY}"
+    echo "    wrote ${TUNNEL_SA_KEY} (mode 0600, gitignored — this is a real credential)"
+  else
+    echo "==> Reusing existing tunnel key ${TUNNEL_SA_KEY}"
+    chmod 600 "${TUNNEL_SA_KEY}"
+  fi
+  # Prove the credential actually works BEFORE handing it to launchd, so a bad key
+  # surfaces here instead of as a silently dead gateway hours later.
+  if ! CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE="${TUNNEL_SA_KEY}" \
+       gcloud auth print-access-token >/dev/null 2>&1; then
+    echo "ERROR: ${TUNNEL_SA_KEY} did not yield a token. Delete it and re-run to mint a new one." >&2
+    exit 1
+  fi
+  echo "    credential verified (minted a token, no reauth prompt)"
+  SA_KEY_FOR_PLIST="${TUNNEL_SA_KEY}"
+else
+  echo "==> TUNNEL_USE_SA=false — using your own gcloud credentials."
+  echo "    NOTE: the tunnel will stop at every reauth window until you run 'gcloud auth login'."
+fi
+
+SUPERVISOR="${HOME}/.local/bin/hermes-gateway-tunnel-supervisor.sh"
+mkdir -p "${HOME}/.local/bin"
+install -m 0755 "${SRC_SUPERVISOR}" "${SUPERVISOR}"
+echo "    supervisor installed to ${SUPERVISOR}"
+
+sed -e "s|__SUPERVISOR__|${SUPERVISOR}|g" \
+    -e "s|__GCLOUD__|${GCLOUD}|g" \
     -e "s|__GCLOUD_DIR__|$(dirname "${GCLOUD}")|g" \
     -e "s|__HOME__|${HOME}|g" \
     -e "s|__VM_NAME__|${VM_NAME}|g" \
@@ -99,6 +157,15 @@ fi
 if grep -q "__" "${TARGET}"; then
   echo "ERROR: unsubstituted __TOKEN__ left in ${TARGET}" >&2
   grep -n "__" "${TARGET}" >&2
+  exit 1
+fi
+# A plist that references a git checkout is a time bomb: the referenced path can be
+# deleted (worktree cleanup, repo move) while launchd still points at it. Refuse to
+# install one rather than discover it weeks later as a dead gateway.
+if grep -qF "${HERE}" "${TARGET}"; then
+  echo "ERROR: ${TARGET} references this checkout (${HERE}) — it must reference" >&2
+  echo "       ${HOME}/.local/bin only, or the agent dies when the checkout moves." >&2
+  grep -nF "${HERE}" "${TARGET}" >&2
   exit 1
 fi
 
@@ -143,10 +210,24 @@ Gateway is UP and will stay up (restarts on sleep/reboot/network change).
 DONE
 else
   echo "WARNING: no response on :${DASHBOARD_PORT} yet."
-  echo "  Reconnect after wake/cold start can take 20-40s — try again shortly."
-  echo "  If it stays down, read ${LOG}:"
-  tail -20 "${LOG}" 2>/dev/null | sed 's/^/    /'
-  echo "  'Address already in use' => another tunnel holds the port."
-  echo "  A credentials error => run: gcloud auth login"
+  # Name the cause instead of dumping a log and hoping. Expired credentials are the most
+  # common one and the most confusing, because the agent stays "running" and the port
+  # stays bound — see the note in gateway-tunnel.sh --status.
+  if grep -qiE "TokenRefreshError|Reauthentication failed|gcloud auth login" "${LOG}" 2>/dev/null; then
+    echo
+    echo "  CAUSE: EXPIRED gcloud CREDENTIALS (found in ${LOG})."
+    echo "  The agent will keep running and holding the port while failing every"
+    echo "  forward, so it looks healthy to launchctl. Fix:"
+    echo "     gcloud auth login"
+    echo "     launchctl kickstart -k ${DOMAIN}/${LABEL}"
+  elif grep -qi "Address already in use" "${LOG}" 2>/dev/null; then
+    echo
+    echo "  CAUSE: another tunnel already holds :${DASHBOARD_PORT}."
+    lsof -nP -iTCP:"${DASHBOARD_PORT}" -sTCP:LISTEN 2>/dev/null | sed 's/^/    /'
+  else
+    echo "  Reconnect after wake/cold start can take 20-40s — try again shortly."
+    echo "  If it stays down, read ${LOG}:"
+    tail -20 "${LOG}" 2>/dev/null | sed 's/^/    /'
+  fi
   exit 1
 fi

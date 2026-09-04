@@ -3,9 +3,15 @@
   macOS LaunchAgent that keeps the secure gateway (IAP tunnel) up.
 
   Without this the tunnel dies on sleep/reboot and the desktop app shows
-  "Remote gateway sign-in required" every morning. KeepAlive restarts it
-  automatically; reconnect after wake takes ~20-40s (launchd throttle +
-  gcloud cold start), so give it a moment before the app reconnects.
+  "Remote gateway sign-in required" every morning. Reconnect after wake takes
+  ~20-40s (launchd throttle + gcloud cold start), so give it a moment.
+
+  KeepAlive alone is NOT sufficient and never was: gcloud's start-iap-tunnel holds
+  the local port open and retries internally forever when its token cannot refresh,
+  so it never dies and KeepAlive never fires. This agent therefore runs
+  scripts/gateway-tunnel-supervisor.sh, which probes the tunnel over HTTP and
+  restarts it when it stops forwarding. Logs live in
+  ~/Library/Logs/hermes-gateway-tunnel.log (rotated).
 
   Install — use the script, which fills in the placeholders below from 00-vars.sh
   and `which gcloud`, removes any stale agent, and verifies the tunnel:
@@ -21,7 +27,7 @@
   Manage:
     launchctl kickstart -k gui/$(id -u)/com.hermes.gateway-tunnel   # force reconnect
     launchctl bootout   gui/$(id -u)/com.hermes.gateway-tunnel      # stop + disable
-    tail -f /tmp/hermes-gateway-tunnel.log
+    tail -f ~/Library/Logs/hermes-gateway-tunnel.log
 -->
 <plist version="1.0">
 <dict>
@@ -30,16 +36,12 @@
 
   <key>ProgramArguments</key>
   <array>
-    <!-- Absolute path: launchd does not read your shell profile, so a bare
-         "gcloud" fails. Filled in from `which gcloud`. -->
-    <string>__GCLOUD__</string>
-    <string>compute</string>
-    <string>start-iap-tunnel</string>
-    <string>__VM_NAME__</string>
-    <string>__PORT__</string>
-    <string>--local-host-port=localhost:__PORT__</string>
-    <string>--zone=__ZONE__</string>
-    <string>--project=__PROJECT_ID__</string>
+    <!-- Runs the SUPERVISOR, not gcloud directly. gcloud's start-iap-tunnel binds the
+         port and then, if its token cannot refresh, retries forever WITHOUT EXITING —
+         so launchd's KeepAlive never fires and the port stays bound but dead. The
+         supervisor health-checks over HTTP and restarts the child. See its header. -->
+    <string>/bin/bash</string>
+    <string>__SUPERVISOR__</string>
   </array>
 
   <key>RunAtLoad</key>
@@ -58,11 +60,27 @@
     <string>__GCLOUD_DIR__:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     <key>HOME</key>
     <string>__HOME__</string>
+    <!-- The installed supervisor lives in ~/.local/bin with NO 00-vars.sh beside it, so
+         its config MUST arrive here. Leaving these out ships a supervisor that cannot
+         find VM_NAME and dies instantly under `set -u` — the gateway then never comes up,
+         while the repo checkout appears fine because a checkout DOES have 00-vars.sh.
+         Re-run install-gateway-launchagent.sh to change any of these. -->
+    <key>VM_NAME</key>
+    <string>__VM_NAME__</string>
+    <key>ZONE</key>
+    <string>__ZONE__</string>
+    <key>PROJECT_ID</key>
+    <string>__PROJECT_ID__</string>
+    <key>DASHBOARD_PORT</key>
+    <string>__PORT__</string>
   </dict>
 
+  <!-- The supervisor writes its own rotated log; this catches anything before that.
+       The previous setup pointed gcloud's raw stderr here and it reached 27 MB /
+       413k lines of repeated auth errors, because nothing rotated it. -->
   <key>StandardOutPath</key>
-  <string>/tmp/hermes-gateway-tunnel.log</string>
+  <string>__HOME__/Library/Logs/hermes-gateway-tunnel.launchd.log</string>
   <key>StandardErrorPath</key>
-  <string>/tmp/hermes-gateway-tunnel.log</string>
+  <string>__HOME__/Library/Logs/hermes-gateway-tunnel.launchd.log</string>
 </dict>
 </plist>

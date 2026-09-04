@@ -618,7 +618,7 @@ gcloud compute start-iap-tunnel hermes-agent 9119 \
 
 # 4. Using the LaunchAgent? Force a reconnect instead.
 launchctl kickstart -k gui/$(id -u)/com.hermes.gateway-tunnel
-tail -f /tmp/hermes-gateway-tunnel.log
+tail -f ~/Library/Logs/hermes-gateway-tunnel.log
 ```
 
 | Tunnel error | Meaning |
@@ -843,6 +843,76 @@ bash ~/hermes-install/02-vm-install.sh 2>&1 | tail -20'
 
 Re-running no longer logs you out — the session-signing secret is preserved (0.11.1).
 
+### "Could not reach the remote Hermes gateway while refreshing its WebSocket ticket"
+
+Also shows as **gateway offline**, or in Settings → Connection mode: *"Could not reach this
+gateway yet. Check the URL — the auth method will appear once it responds."*
+
+**Check credentials first. This is almost always expired gcloud auth, not the URL, not the
+app, and not an upgrade you just did.** Run:
+
+```bash
+bash gcp/vpc-install/scripts/gateway-tunnel.sh --status
+```
+
+It names the cause. The fix, when it is credentials:
+
+```bash
+gcloud auth login                                                # interactive, needs a browser
+launchctl kickstart -k gui/$(id -u)/com.hermes.gateway-tunnel     # restart the tunnel
+```
+
+#### It now self-heals — but only since v0.16.2
+
+The LaunchAgent runs `scripts/gateway-tunnel-supervisor.sh`, which probes the tunnel over
+HTTP every 15s and restarts it after 45s of not forwarding. So a credential lapse recovers
+**by itself** once you re-authenticate, and you get a macOS notification telling you to.
+
+If you are on an older install, re-run
+`bash gcp/vpc-install/scripts/install-gateway-launchagent.sh` to pick it up.
+
+#### Why this one is so misleading
+
+An expired-credential tunnel **looks completely healthy**:
+
+| Check | Says | Reality |
+|---|---|---|
+| `launchctl list \| grep hermes` | status **0** | fine — the process is running |
+| `lsof -iTCP:9119 -sTCP:LISTEN` | **bound** | the tunnel accepts local connections |
+| `curl localhost:9119` | **HTTP 000** | ← the only check that tells the truth |
+
+The tunnel process stays up and keeps the port bound; it just cannot forward, because
+`gcloud` can no longer mint a token. The app connects at the TCP level, then fails when it
+tries to refresh its WebSocket ticket — hence that specific wording. **Any liveness check
+based on the process or the port reports HEALTHY.** Only a real HTTP request reveals it.
+The log ends in:
+
+```
+googlecloudsdk.core.credentials.exceptions.TokenRefreshError: There was a problem
+refreshing your current auth tokens: Reauthentication failed.
+  $ gcloud auth login
+```
+
+> **Expect this periodically.** Google Workspace reauth policies expire the credential on a
+> schedule, so a permanently-installed LaunchAgent *will* hit this — it is not a fault in
+> the install. Hit on 2026-08-19, first observed right after an unrelated upgrade, which is
+> exactly how it ends up misattributed.
+
+> The same lesson as `03-verify.sh` test 13: **liveness is not correctness.** A bound port
+> proves as little about a tunnel as an open port proves about Honcho's memory.
+
+#### The part that made it recur (fixed in v0.16.2)
+
+`gcloud compute start-iap-tunnel` **binds the local port first**, and when its token later
+fails to refresh it **does not exit** — it retries internally, forever, holding the listener
+open. Measured 2026-09-02: one such process had been alive **1d 9h**, logging ~1.5
+`Reauthentication failed` errors per **second**, with a **27 MB / 413k-line** log.
+
+`KeepAlive` only restarts a process that **dies**, so it never fired. And because the stuck
+process never re-read credentials, **`gcloud auth login` did not fix it either** — only a
+manual `launchctl kickstart` did. That is precisely why this failure kept coming back and
+kept looking like something else had broken.
+
 ### "The desktop app says Remote gateway sign-in required"
 
 Nine times out of ten the gateway tunnel is simply down, not your credentials. Order of
@@ -852,7 +922,7 @@ checks:
 lsof -nP -iTCP:9119 -sTCP:LISTEN                 # is anything serving locally?
 launchctl list | grep -i hermes                  # status != 0 means the agent is failing
 curl -s -o /dev/null -w '%{http_code}\n' http://localhost:9119/   # 302 = healthy auth gate
-tail -20 /tmp/hermes-gateway-tunnel.log
+tail -20 ~/Library/Logs/hermes-gateway-tunnel.log
 launchctl kickstart -k gui/$(id -u)/com.hermes.gateway-tunnel      # force reconnect
 ```
 
