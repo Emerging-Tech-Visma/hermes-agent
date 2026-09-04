@@ -13,7 +13,7 @@ no external IP.
 > 2026-09-04). The live box above still runs 3.7-flash until the install is re-run —
 > this line will be updated when it is re-probed.
 
-[![version](https://img.shields.io/badge/version-0.17.2-blue)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.17.3-blue)](CHANGELOG.md)
 [![Hermes](https://img.shields.io/badge/Hermes-v0.20.4-8A2BE2)](https://hermes-agent.nousresearch.com)
 [![data](https://img.shields.io/badge/data-europe--west2-green)](#eu-data-residency)
 [![inference](https://img.shields.io/badge/inference-vertex%20global-yellow)](#eu-data-residency)
@@ -158,6 +158,48 @@ do nothing. These are for when you want to move sooner, or check:
 
 Every server-side command goes over the IAP tunnel (the VM has no public IP) and retries
 the transient `exit 255` that `gcloud compute ssh` occasionally throws.
+
+### When you can't connect
+
+Since 0.17.1 the **desktop app and the command line fail independently**, because they
+authenticate as different identities: the tunnel runs as the `hermes-tunnel` service
+account, while `hermesctl` runs as *you*. So `gcloud auth login` is the fix for one of them
+and does nothing for the other. Start here:
+
+```bash
+curl -s -o /dev/null -w "%{http_code}\n" http://localhost:9119
+```
+
+| It says | What it means | What to do |
+|---|---|---|
+| **302** | The tunnel is healthy — 302 is the auth gate. | If the app still won't connect, the problem is the app or the password, not your login. `gcloud auth login` will not help. |
+| **000** | The tunnel is not forwarding. | **Wait ~2 minutes first** — a cold start has taken over two minutes to first answer. Then `launchctl kickstart -k gui/$(id -u)/com.hermes.gateway-tunnel`, and if it is still 000 read the log below, which names the actual fix. |
+
+```bash
+tail -20 ~/Library/Logs/hermes-gateway-tunnel.log
+```
+
+**`gcloud auth login` is still the fix for `hermesctl`.** Google enforces a periodic
+reauthentication on user credentials, so after idle the CLI stops with:
+
+```
+Reauthentication failed. cannot prompt during non-interactive execution.
+```
+
+The tell-tale is **`hermesctl` failing while the app works fine** — that is this split, not a
+broken tunnel. Re-login and the CLI works again; the tunnel is untouched.
+
+| Symptom | Fix |
+|---|---|
+| App won't connect, `curl` returns 302 | Not an auth problem — check the app and the dashboard password |
+| `curl` returns 000 | Wait ~2 min → `launchctl kickstart` → read the tunnel log |
+| `hermesctl` says `Reauthentication failed` | `gcloud auth login` |
+
+Why the app no longer needs a periodic re-login: a LaunchAgent can never answer an
+interactive reauth prompt, so the tunnel was guaranteed to die after idle while it used a
+human credential. Service-account credentials are exempt from reauth. Full reasoning in
+[`OPS-NOTES.md`](gcp/vpc-install/OPS-NOTES.md) §7a and the `TUNNEL_USE_SA` block of
+[`00-vars.sh`](gcp/vpc-install/00-vars.sh).
 
 ---
 
