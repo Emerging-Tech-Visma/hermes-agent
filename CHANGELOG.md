@@ -72,8 +72,10 @@ version: [CONTRIBUTING.md](CONTRIBUTING.md) has the mechanics.
 - **Cost estimate revised down while introductory pricing lasts.** `gemini-3.8-flash` is
   **$0.75 / $3.75** per 1M input / output tokens at `global` through **2026-12-31**, then
   **$1.50 / $7.50** from **2027-01-01** — the latter being exactly what 3.7-flash costs
-  today. Monthly total moves ~$235–365 → **~$200–275**, and back again on 2027-01-01 with
-  no action required. Non-`global` endpoints carry a ~10% premium. Source: the
+  today. The token line moves ~$75–180 → **~$40–90**, taking the line-item sum from
+  $234–367 to **$199–277** (tabled as ~$200–275, matching how the previous estimate
+  rounded). On 2027-01-01 the model line doubles back with no action required.
+  Non-`global` endpoints carry a ~10% premium. Source: the
   [Vertex AI pricing page](https://cloud.google.com/vertex-ai/generative-ai/pricing),
   read 2026-09-04.
 

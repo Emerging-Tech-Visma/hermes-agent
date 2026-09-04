@@ -511,12 +511,17 @@ expected behaviour, not a fault.
 | GCS backup | <$1 |
 | **Total** | **~$200–275** |
 
+Line items sum to **$199–277**; the table rounds that to ~$200–275, as the previous
+estimate rounded $234–367 to ~$235–365.
+
 > **The model line is on introductory pricing.** `gemini-3.8-flash` is billed at
 > **$0.75 / $3.75** per 1M input / output tokens at `global` **through 2026-12-31**,
 > then **$1.50 / $7.50** from **2027-01-01** — the same rate `gemini-3.7-flash` charges
-> today. So this line roughly **doubles to ~$75–180 on 2027-01-01** (total back to
-> ~$235–365) with no change on your side. Non-`global` endpoints carry a ~10% premium.
-> Checked against the [Vertex AI pricing page](https://cloud.google.com/vertex-ai/generative-ai/pricing)
+> today. So the model line roughly **doubles back to ~$75–180 on 2027-01-01**, with no
+> change on your side; on today's non-token prices that restores the earlier ~$235–365
+> total, though the VM and NAT lines are not themselves guaranteed to hold until then.
+> Non-`global` endpoints carry a ~10% premium. Checked against the
+> [Vertex AI pricing page](https://cloud.google.com/vertex-ai/generative-ai/pricing)
 > on 2026-09-04 — re-check it, prices move.
 
 Chrome, Playwright and SearXNG cost nothing beyond the VM they sit on — that is

@@ -176,8 +176,9 @@ the transient `exit 255` that `gcloud compute ssh` occasionally throws.
 
 Running cost at moderate daily team use: **~$200–275/month** while `gemini-3.8-flash`
 is on introductory pricing (**$0.75 / $3.75** per 1M input / output tokens through
-**2026-12-31**, then **$1.50 / $7.50** — back to ~$235–365/month from 2027-01-01).
-Chat tokens dominate — breakdown and the cheapest levers are in
+**2026-12-31**, then **$1.50 / $7.50**). On 2027-01-01 the model line roughly doubles
+back to ~$75–180, restoring the earlier ~$235–365/month total if the other line items
+hold. Chat tokens dominate — breakdown and the cheapest levers are in
 [INSTALL.md §11](gcp/vpc-install/INSTALL.md).
 
 ---
