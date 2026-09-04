@@ -122,9 +122,22 @@ if [ "${TUNNEL_USE_SA:-true}" = "true" ]; then
   fi
   # Prove the credential actually works BEFORE handing it to launchd, so a bad key
   # surfaces here instead of as a silently dead gateway hours later.
-  if ! CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE="${TUNNEL_SA_KEY}" \
+  # A freshly created key is eventually consistent: the first token request can fail
+  # for a few seconds even though the key is valid. Observed 2026-09-04 — the check
+  # failed immediately after `keys create`, then succeeded seconds later by hand. Poll
+  # rather than declaring a good key bad and telling the operator to delete it.
+  TOKEN_OK=""
+  for i in $(seq 1 10); do
+    if CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE="${TUNNEL_SA_KEY}" \
        gcloud auth print-access-token >/dev/null 2>&1; then
-    echo "ERROR: ${TUNNEL_SA_KEY} did not yield a token. Delete it and re-run to mint a new one." >&2
+      TOKEN_OK="yes"; break
+    fi
+    sleep 3
+  done
+  if [ -z "${TOKEN_OK}" ]; then
+    echo "ERROR: ${TUNNEL_SA_KEY} did not yield a token after 30s." >&2
+    echo "       Check that ${TUNNEL_SA_EMAIL} still has roles/iap.tunnelResourceAccessor," >&2
+    echo "       then delete the key file and re-run to mint a new one." >&2
     exit 1
   fi
   echo "    credential verified (minted a token, no reauth prompt)"
@@ -140,6 +153,7 @@ install -m 0755 "${SRC_SUPERVISOR}" "${SUPERVISOR}"
 echo "    supervisor installed to ${SUPERVISOR}"
 
 sed -e "s|__SUPERVISOR__|${SUPERVISOR}|g" \
+    -e "s|__SA_KEY__|${SA_KEY_FOR_PLIST}|g" \
     -e "s|__GCLOUD__|${GCLOUD}|g" \
     -e "s|__GCLOUD_DIR__|$(dirname "${GCLOUD}")|g" \
     -e "s|__HOME__|${HOME}|g" \
@@ -148,6 +162,14 @@ sed -e "s|__SUPERVISOR__|${SUPERVISOR}|g" \
     -e "s|__ZONE__|${ZONE}|g" \
     -e "s|__PROJECT_ID__|${PROJECT_ID}|g" \
     "${TEMPLATE}" > "${TARGET}"
+
+# With TUNNEL_USE_SA=false there is no key, and an EMPTY
+# CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE is worse than an absent one — gcloud would
+# try to load "" as a credential file. Remove the key outright in that case.
+if [ -z "${SA_KEY_FOR_PLIST}" ]; then
+  plutil -remove EnvironmentVariables.CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE \
+    "${TARGET}" >/dev/null 2>&1 || true
+fi
 
 # Fail loudly on a malformed plist rather than leaving launchd to reject it silently.
 if ! plutil -lint "${TARGET}" >/dev/null; then

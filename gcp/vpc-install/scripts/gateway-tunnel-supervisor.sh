@@ -94,9 +94,18 @@ while :; do
   #    start the child — just wait, and tell the human what to run.
   if ! creds_ok; then
     NOW="$(date +%s)"
-    log "gcloud credentials are not usable — waiting. Fix: gcloud auth login"
+    # Two very different faults, so don't print the same advice for both. Under a
+    # service account there is no reauth and nothing for a human to log into — a
+    # failure here means the key is missing, revoked, or lost its IAM binding, and
+    # `gcloud auth login` would be actively misleading.
+    if [ -n "${CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE:-}" ]; then
+      FIX="service-account key ${CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE} is not usable (missing, revoked, or lost roles/iap.tunnelResourceAccessor). Re-run install-gateway-launchagent.sh to mint a new one."
+    else
+      FIX="gcloud auth login"
+    fi
+    log "credentials are not usable — waiting. Fix: ${FIX}"
     if [ "$((NOW - LAST_NOTIFY))" -ge "${NOTIFY_EVERY}" ]; then
-      notify "Credentials expired. Run: gcloud auth login"
+      notify "Hermes gateway: ${FIX}"
       LAST_NOTIFY="${NOW}"
     fi
     stop_child

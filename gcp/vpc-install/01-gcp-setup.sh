@@ -158,6 +158,40 @@ gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
   --member="user:${CALLER}" \
   --role="roles/compute.osLogin" --condition=None >/dev/null
 
+# The operator's own grant above covers `hermesctl` and interactive SSH. It is NOT
+# enough for the gateway tunnel, which runs unattended as a LaunchAgent: Google
+# enforces a periodic REAUTH on user credentials, and reauth cannot be answered by
+# a background process ("cannot prompt during non-interactive execution"). So the
+# tunnel gets its own service account, which is exempt from reauth.
+#
+# Minimal scope on purpose: tunnel access only. No osLogin (it does not SSH), no
+# Vertex, no storage. See the TUNNEL_USE_SA block in 00-vars.sh.
+if [ "${TUNNEL_USE_SA:-true}" = "true" ]; then
+  echo "==> Service account for the local gateway tunnel: ${TUNNEL_SA_NAME}"
+  if ! gcloud iam service-accounts describe "${TUNNEL_SA_EMAIL}" \
+       --project="${PROJECT_ID}" >/dev/null 2>&1; then
+    gcloud iam service-accounts create "${TUNNEL_SA_NAME}" \
+      --project="${PROJECT_ID}" \
+      --display-name="Hermes gateway tunnel (local LaunchAgent)" \
+      --description="IAP tunnel only. Exempt from user-credential reauth so the \
+gateway survives idle/reboot. Key lives on the operator Mac at 0600." >/dev/null
+    # Same eventual-consistency trap as the VM SA above: a freshly created SA is
+    # not immediately visible to add-iam-policy-binding.
+    for i in $(seq 1 20); do
+      gcloud iam service-accounts describe "${TUNNEL_SA_EMAIL}" \
+        --project="${PROJECT_ID}" >/dev/null 2>&1 && break
+      sleep 3
+    done
+  else
+    echo "    already exists"
+  fi
+  gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+    --member="serviceAccount:${TUNNEL_SA_EMAIL}" \
+    --role="roles/iap.tunnelResourceAccessor" --condition=None >/dev/null
+  echo "    granted roles/iap.tunnelResourceAccessor"
+  echo "    key is created later, on the Mac, by scripts/install-gateway-launchagent.sh"
+fi
+
 # ---------------------------------------------------------------------------
 # 7. Copy the installer to the VM (over IAP — there is no public IP)
 # ---------------------------------------------------------------------------

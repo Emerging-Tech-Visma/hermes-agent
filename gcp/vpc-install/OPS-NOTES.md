@@ -603,6 +603,75 @@ gcloud compute disks add-resource-policies hermes-agent \
 Symptom: the desktop app says *"Remote gateway sign-in required"* or
 `localhost:9119` will not load. Almost always the tunnel, not the VM.
 
+### 7a. The tunnel runs as a service account — that is deliberate
+
+Since **0.16.3** the LaunchAgent does **not** authenticate as you. It uses a dedicated
+service account, `hermes-tunnel@<project>.iam.gserviceaccount.com`, holding
+**`roles/iap.tunnelResourceAccessor` and nothing else**, with its key at
+`~/.config/gcloud/hermes-tunnel-sa.json` (mode 0600, gitignored) passed to gcloud as
+`CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE`.
+
+**Why.** Google Cloud enforces a periodic **reauthentication** on user credentials. A
+LaunchAgent has nobody to prompt, so it dies with:
+
+```
+Reauthentication failed. cannot prompt during non-interactive execution.
+```
+
+There is no supervisor, retry or `KeepAlive` that can answer that — this is why the gateway
+used to go dark after idle and needed `gcloud auth login`. Service-account credentials are
+exempt from reauth, so the tunnel now survives a week of idle and a reboot untouched.
+
+**`gcloud auth login` is therefore NOT the fix for a dead tunnel any more.** The supervisor's
+log and notification will say so. Check instead:
+
+```bash
+# Is the key still good? (should print a token)
+CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE=~/.config/gcloud/hermes-tunnel-sa.json \
+  gcloud auth print-access-token >/dev/null && echo OK
+
+# Does the SA still hold the role? (someone may have pruned IAM)
+gcloud projects get-iam-policy test-disco-cm \
+  --flatten='bindings[].members' \
+  --filter='bindings.members:hermes-tunnel@ AND bindings.role:roles/iap.tunnelResourceAccessor' \
+  --format='value(bindings.role)'
+
+# Mint a fresh key and reinstall (safe to re-run; deletes nothing on GCP)
+rm -f ~/.config/gcloud/hermes-tunnel-sa.json
+bash gcp/vpc-install/scripts/install-gateway-launchagent.sh
+```
+
+To go back to using your own credentials, set `TUNNEL_USE_SA="false"` in `00-vars.sh` and
+re-run the installer — accepting that the tunnel then stops at every reauth window.
+
+**The key is a real credential.** It grants tunnel access to the VM to anyone who reads the
+file. It is `.gitignore`d (`*-sa.json`), but if the Mac is lost, revoke it:
+
+```bash
+# --filter matters: the SA also has a SYSTEM_MANAGED key that Google rotates itself.
+# Only ever delete a USER_MANAGED one — that is the key on this Mac.
+gcloud iam service-accounts keys list \
+  --iam-account=hermes-tunnel@test-disco-cm.iam.gserviceaccount.com \
+  --filter='keyType=USER_MANAGED' --format='value(name.basename())'
+
+gcloud iam service-accounts keys delete <KEY_ID> \
+  --iam-account=hermes-tunnel@test-disco-cm.iam.gserviceaccount.com
+```
+
+### 7b. Dead tunnel, no log, nothing listening — check what the plist points at
+
+If `launchctl list | grep hermes` shows the agent **listed but with a negative exit status**,
+nothing is on :9119, and the log has simply **stopped**, the LaunchAgent is probably pointing
+at a script that no longer exists:
+
+```bash
+plutil -extract ProgramArguments.1 raw ~/Library/LaunchAgents/com.hermes.gateway-tunnel.plist
+# MUST be ~/.local/bin/hermes-gateway-tunnel-supervisor.sh — never a path inside a git
+# checkout or .claude/worktrees/, which can be deleted from under launchd. That is exactly
+# what happened on 2026-09-04. Re-run install-gateway-launchagent.sh to repair it; since
+# 0.16.3 the installer refuses to write a checkout path at all.
+```
+
 ```bash
 # 1. Is the tunnel up?
 curl -sS -I http://localhost:9119/          # want 200, 302 or 401
@@ -1068,6 +1137,9 @@ gcloud projects remove-iam-policy-binding test-disco-cm \
 | `localhost:9119` won't load | the tunnel died (sleep/reboot/VM stop) (§7) |
 | Gateway `active` but does nothing | wedged → §2b, then install the watchdog §2c |
 | In-app / dashboard update reports failure | the updater ran inside the gateway cgroup and was reaped when `hermes update` restarted it. Use the timer or a plain SSH `hermes update` (§11b) |
+| Tunnel log repeats `Reauthentication failed. cannot prompt` | the tunnel is using **your** credentials, which Google forces to reauth. Switch it to the service account: `TUNNEL_USE_SA="true"` + re-run the installer (§7a) |
+| Gateway dies after days of idle, works again once you log in | same reauth cause — a daemon cannot answer the prompt. The SA credential is the fix, not `gcloud auth login` (§7a) |
+| Agent listed, exit status **-15**, nothing on :9119, log just stops | the plist points at a script that was deleted (a git worktree). Check `ProgramArguments.1`; re-run the installer (§7b) |
 | Updated Hermes, but the UI looks unchanged | `hermes update` does not restart `hermes-dashboard.service`; restart it (§11a) |
 | Autoupdate timer enabled but never fires | malformed `AUTOUPDATE_SCHEDULE`; check `systemd-analyze calendar '<expr>'` (§11a) |
 | Gateway `inactive (dead)` after a config edit | exit **78** = config error; `RestartPreventExitStatus=78` stops the restart loop on purpose (§2a-bis) |

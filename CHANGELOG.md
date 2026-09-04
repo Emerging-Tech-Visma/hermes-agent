@@ -42,6 +42,100 @@ version: [CONTRIBUTING.md](CONTRIBUTING.md) has the mechanics.
 
 ---
 
+## [0.17.1] — 2026-09-04
+
+### Fixed — the gateway tunnel now authenticates as a service account, so idle no longer kills it
+
+Two faults, hit together on 2026-09-04. The desktop app showed the same *"Could not reach
+this gateway yet"* that 0.16.2 is about, from two causes that 0.16.2 did not fix.
+
+#### 1. The installer wrote a LaunchAgent pointing into a git worktree
+
+0.16.2's supervisor, its plist and **two commit messages** were all written for a stable
+`~/.local/bin` install. The **one line in `install-gateway-launchagent.sh` that chooses the
+path was never changed** — it still passed `${HERE}`, the checkout it was run from. So the
+installed plist referenced
+`.claude/worktrees/hermes-flash-upgrade-test-44506f/…/gateway-tunnel-supervisor.sh`; that
+worktree was reset to `main`, the script vanished, and launchd could no longer exec it:
+
+| Check | Says | Reality |
+|---|---|---|
+| `launchctl list \| grep hermes` | listed | agent is loaded |
+| last exit status | **-15** | never actually ran |
+| `lsof -iTCP:9119` | **nothing** | no listener at all |
+| `~/Library/Logs/…tunnel.log` | stops at 14:07 | died when the file disappeared |
+
+- The installer now `install -m 0755`s the supervisor to
+  `~/.local/bin/hermes-gateway-tunnel-supervisor.sh` and points the plist there.
+- It also **refuses to write a plist that contains its own checkout path** (`grep -qF
+  "${HERE}"`), the same shape as the existing unsubstituted-`__TOKEN__` guard, so this
+  cannot regress silently.
+- **Verified the way it actually failed**, not from the source tree: copied the package to a
+  foreign directory, installed from *there*, **deleted that directory**, restarted the agent
+  — gateway still served **HTTP 302**. The original failure is now unreachable.
+- The 0.16.2 entry claimed this was "caught before it could bite". That claim has been
+  corrected in place. **A commit message is not verification**, and — for the second time
+  after the 0.16.1 `hermesctl` PATH defect — **exercising a script from its own checkout
+  does not test how it is installed.**
+
+#### 2. THE REAL ONE: a LaunchAgent can never satisfy a reauth prompt
+
+Underneath the missing script, the log showed the tunnel had been refusing to start for
+hours, once every 30 seconds:
+
+```
+Reauthentication failed. cannot prompt during non-interactive execution.
+```
+
+That is Google Cloud's periodic **reauthentication** requirement on *user* credentials.
+`01-gcp-setup.sh` grants `roles/iap.tunnelResourceAccessor` to the **human operator**, and
+the tunnel then runs unattended as that human. **No supervisor, timeout, retry or
+`KeepAlive` can fix this** — reauth is interactive by definition, and a daemon has no one to
+prompt. 0.16.2's supervisor diagnosed it correctly and could do nothing about it. The
+requirement — *"it needs to work after a week of idle"* — was **structurally unmeetable**.
+
+**Fix: the tunnel gets its own service account.** Service-account credentials are exempt
+from reauth.
+
+- **`TUNNEL_SA_NAME` / `TUNNEL_SA_EMAIL` / `TUNNEL_SA_KEY` / `TUNNEL_USE_SA` in
+  `00-vars.sh`.** `01-gcp-setup.sh` creates `hermes-tunnel` and grants it
+  **`roles/iap.tunnelResourceAccessor` and nothing else** — no `osLogin`, no Vertex, no
+  storage. It is deliberately **not** the VM's `hermes-agent` SA, whose roles would be
+  wildly over-granted for a laptop.
+- **The key is minted on the Mac** by `install-gateway-launchagent.sh` under `umask 077`
+  (never briefly world-readable), `chmod 600`, and the plist passes it as
+  `CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE`. It is `.gitignore`d (`*-sa.json`) and never
+  committed. This is the **one key file in an install that otherwise deliberately has none**
+  — the reasoning is written out in `00-vars.sh` next to the variables.
+- **The installer verifies the credential before handing it to launchd**, so a bad key fails
+  loudly at install time instead of becoming a dead gateway hours later.
+- **The supervisor no longer prints the wrong advice.** Under a service account there is
+  nothing for a human to log into, so a credential failure now names the real causes (key
+  missing, revoked, or lost its IAM binding) instead of suggesting `gcloud auth login`.
+- `TUNNEL_USE_SA="false"` restores the old operator-credential behaviour, and the installer
+  says plainly that the tunnel will then stop at every reauth window.
+
+**Verified that it no longer depends on the human login at all** — the only test that
+actually proves the week-idle claim. With `CLOUDSDK_CONFIG` pointed at an **empty**
+directory, so `gcloud auth list` reports no credentialed accounts whatsoever:
+
+| Test | Result |
+|---|---|
+| `gcloud auth print-access-token` with only the SA key | **token minted** |
+| full `start-iap-tunnel` → `curl localhost:9219` | **HTTP 302** |
+| live agent's plist env | `CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE` set |
+| live gateway on :9119 | **HTTP 302** |
+
+#### Corrected while verifying
+
+- A freshly created SA key is **eventually consistent**. The first version of the installer's
+  own verification failed immediately after `keys create` and told the operator to delete a
+  perfectly good key; by hand, seconds later, it minted a token fine. It now polls for up to
+  30s — the same trap `01-gcp-setup.sh` already documents for SA *creation*.
+- With `TUNNEL_USE_SA=false` the plist would have carried an **empty**
+  `CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE`, which is worse than an absent one (gcloud would
+  try to load `""`). The installer now removes the key outright in that case.
+
 ## [0.17.0] — 2026-09-04
 
 ### Changed

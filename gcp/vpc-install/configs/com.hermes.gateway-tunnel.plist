@@ -60,6 +60,14 @@
     <string>__GCLOUD_DIR__:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     <key>HOME</key>
     <string>__HOME__</string>
+    <!-- The tunnel authenticates as a SERVICE ACCOUNT, not as the human operator.
+         Google enforces a periodic reauth on user credentials, and a LaunchAgent can
+         never answer an interactive prompt — it just dies with "cannot prompt during
+         non-interactive execution" and the gateway goes dark until someone notices.
+         A service-account key is exempt from reauth, so this survives a week idle and
+         a reboot. Empty when TUNNEL_USE_SA=false, which restores the old behaviour. -->
+    <key>CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE</key>
+    <string>__SA_KEY__</string>
     <!-- The installed supervisor lives in ~/.local/bin with NO 00-vars.sh beside it, so
          its config MUST arrive here. Leaving these out ships a supervisor that cannot
          find VM_NAME and dies instantly under `set -u` — the gateway then never comes up,

@@ -38,3 +38,8 @@ tmp/
 *.log
 *.bak
 *.bak-*
+
+# Local gateway-tunnel service-account key. Lives in ~/.config/gcloud, but guard
+# against a stray copy landing in the repo — this is a real credential.
+hermes-tunnel-sa.json
+*-sa.json

@@ -13,7 +13,7 @@ no external IP.
 > 2026-09-04). The live box above still runs 3.7-flash until the install is re-run —
 > this line will be updated when it is re-probed.
 
-[![version](https://img.shields.io/badge/version-0.17.0-blue)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.17.1-blue)](CHANGELOG.md)
 [![Hermes](https://img.shields.io/badge/Hermes-v0.20.4-8A2BE2)](https://hermes-agent.nousresearch.com)
 [![data](https://img.shields.io/badge/data-europe--west2-green)](#eu-data-residency)
 [![inference](https://img.shields.io/badge/inference-vertex%20global-yellow)](#eu-data-residency)
