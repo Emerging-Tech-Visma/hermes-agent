@@ -12,11 +12,11 @@ install order, and the gotchas learned along the way — lives in **[AGENTS.md](
 ## Where things are
 
 - **[README.md](README.md)** — the front door: what gets built, quick start, repo map.
-- **[CHANGELOG.md](CHANGELOG.md)** — version history. Currently **0.17.1**.
+- **[CHANGELOG.md](CHANGELOG.md)** — version history. Currently **0.17.2**.
   **Add an entry here for any change to the installable configuration** (new service,
   changed default model/region/OS, new variant, re-probed facts). Keep the
   MAJOR/MINOR/PATCH rules stated at the top of that file.
-- **[`gcp/vpc-install/`](gcp/vpc-install/)** — **the current install** (v0.17.1, running Hermes v0.20.5):
+- **[`gcp/vpc-install/`](gcp/vpc-install/)** — **the current install** (v0.17.2, running Hermes v0.20.5):
   private VPC, no external IP, IAP-only ingress, Ubuntu 26.04, Chrome + Playwright,
   self-hosted SearXNG, Honcho-on-Vertex (no external API keys), `gemini-3.8-flash`
   @ `global` (EU-residency exception, inference only) with `gemini-3.5-flash` as the
