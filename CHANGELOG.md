@@ -107,12 +107,29 @@ repeatedly misattributed to whatever had changed most recently.
   HTTP 000): detected and recovered in **~35s** with a new child.
 - **The supervisor is installed to `~/.local/bin/`, not referenced in the checkout.** The
   first version pointed launchd at the script inside the repo working tree — and this repo's
-  own workflow uses **temporary per-agent git worktrees**, so cleaning one up would delete
-  the running supervisor and kill the gateway, failing in a way that looks exactly like the
-  credential fault it exists to fix. The installer now `install -m 0755`s it to a stable
-  path and passes `VM_NAME` / `ZONE` / `PROJECT_ID` / `DASHBOARD_PORT` through the plist's
-  `EnvironmentVariables`, because the installed copy has no `00-vars.sh` beside it to
-  source. Caught before it could bite, on 2026-09-02.
+  own workflow uses **temporary per-agent git worktrees**, so cleaning one up deletes the
+  running supervisor and kills the gateway, failing in a way that looks exactly like the
+  credential fault it exists to fix. The installer now `install -m 0755`s it to
+  `~/.local/bin/hermes-gateway-tunnel-supervisor.sh` and passes `VM_NAME` / `ZONE` /
+  `PROJECT_ID` / `DASHBOARD_PORT` through the plist's `EnvironmentVariables`, because the
+  installed copy has no `00-vars.sh` beside it to source.
+
+  **It bit before this was true.** An earlier revision of this entry claimed the move was
+  "caught before it could bite, on 2026-09-02". It was not: the supervisor, the plist and
+  two commit messages were all written for `~/.local/bin`, but the **one line in
+  `install-gateway-launchagent.sh` that chooses the path was never changed** — it still
+  passed `${HERE}`. So the installed plist pointed at
+  `.claude/worktrees/hermes-flash-upgrade-test-44506f/…`, that worktree was reset to `main`
+  on **2026-09-04**, the script vanished, and launchd could no longer exec it: agent loaded,
+  `exit -15`, nothing listening on 9119, no log. The desktop app reported the same
+  *"Could not reach this gateway yet"* this entry is about — from a completely different
+  cause.
+
+  Two lessons, both already in this repo's rules and both ignored here: **a commit message
+  is not verification** (three artifacts described the fix; the code did one thing), and
+  **exercising a script from its own checkout does not test how it is installed** — the same
+  shape as the 0.16.1 `hermesctl` PATH defect. The installer now also **refuses to write a
+  plist that references its own checkout**, so this cannot regress silently.
 - **`hermesctl` now fails fast with the real fix.** Every VM-side command goes over the IAP
   tunnel, so an expired credential breaks *all* of it — and breaks it confusingly, because
   `gcloud compute ssh` returns **255**, which `vm()`'s retry loop treats as transient and
