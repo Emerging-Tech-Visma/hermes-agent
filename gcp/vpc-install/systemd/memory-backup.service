@@ -4,5 +4,11 @@ Description=Back up Hermes state to GCS
 [Service]
 Type=oneshot
 Environment=HOME=__HOME__
-Environment=PATH=__HOME__/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# /snap/bin MUST be here: on the Ubuntu GCP image gcloud is a snap and lives ONLY at
+# /snap/bin/gcloud (there is no /usr/bin/gcloud). memory-backup.sh calls
+# `gcloud storage rsync`, so without this the unit exits 127 on every firing and the
+# backups fail silently — the timer reports a failed unit nobody looks at.
+# This hid for a long time because running the script BY HAND works: an interactive
+# login shell has /snap/bin on PATH, systemd's does not. Verified 2026-09-06.
+Environment=PATH=__HOME__/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin
 ExecStart=__HOME__/.local/bin/memory-backup.sh __WORKSPACE__ __BUCKET__

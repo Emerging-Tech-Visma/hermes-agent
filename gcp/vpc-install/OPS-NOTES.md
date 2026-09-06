@@ -926,8 +926,34 @@ Re-running no longer logs you out — the session-signing secret is preserved (0
 Also shows as **gateway offline**, or in Settings → Connection mode: *"Could not reach this
 gateway yet. Check the URL — the auth method will appear once it responds."*
 
-**Check credentials first. This is almost always expired gcloud auth, not the URL, not the
-app, and not an upgrade you just did.** Run:
+> **First, split local from remote — one command.** This symptom has *two* unrelated
+> causes that are byte-for-byte identical on every local check, and the credential fix
+> below does nothing for the other one. Probe the dashboard **from inside the VM**:
+>
+> ```bash
+> gcloud compute ssh hermes-agent --zone=europe-west2-b --tunnel-through-iap \
+>   --command='curl -s -o /dev/null -w "%{http_code}\n" --max-time 10 http://localhost:9119/'
+> ```
+>
+> Read it in this order — **the SSH itself is the first signal**, because this command
+> authenticates with *your* user credentials over IAP:
+>
+> - **The SSH fails** (auth error, `return code [255]`) → your own gcloud credentials or IAP
+>   access are the problem. Fix those first (`gcloud auth login`) and re-run — you have not
+>   learned anything about the agent yet. Note the tunnel itself may still be fine: since
+>   0.17.1 the LaunchAgent authenticates as a **service account**, which does not expire on
+>   the same schedule your user credentials do.
+> - **SSH works, curl prints `000`** → the agent has stopped answering *on the VM*. The tunnel
+>   is an innocent bystander and no amount of `gcloud auth login` will help → jump to
+>   [the gateway wedges with the port still open](#the-gateway-wedges-with-the-port-still-open-remote-side).
+> - **SSH works, curl prints `302`** → the agent is healthy and the fault is local to your Mac
+>   (the tunnel or its service-account credential) → continue with this section.
+>
+> Added 2026-09-06, after a live outage was misread as a credential lapse for exactly this
+> reason. See that section for why every local signal lies.
+
+**When it is local, check credentials first — it is almost always expired gcloud auth, not
+the URL, not the app, and not an upgrade you just did.** Run:
 
 ```bash
 bash gcp/vpc-install/scripts/gateway-tunnel.sh --status
@@ -990,6 +1016,122 @@ open. Measured 2026-09-02: one such process had been alive **1d 9h**, logging ~1
 process never re-read credentials, **`gcloud auth login` did not fix it either** — only a
 manual `launchctl kickstart` did. That is precisely why this failure kept coming back and
 kept looking like something else had broken.
+
+### The gateway wedges with the port still open (remote side)
+
+**Symptom is identical to the credential failure above** — *gateway offline*, *"Could not
+reach the remote Hermes gateway…"*, tunnel supervisor logging `not forwarding (HTTP 000)`
+on a loop — but the cause is on the **VM**, and nothing you do on your Mac fixes it.
+
+First hit and diagnosed **2026-09-06**, on Hermes **v0.21.0**.
+
+#### Confirm it in one command
+
+```bash
+gcloud compute ssh hermes-agent --zone=europe-west2-b --tunnel-through-iap \
+  --command='curl -s -o /dev/null -w "%{http_code}\n" --max-time 10 http://localhost:9119/; ss -ltn | grep 9119'
+```
+
+`http=000` **from the VM itself** with the socket still in `LISTEN` is the signature. Look at
+the `Recv-Q` column on that LISTEN row: it is the count of completed TCP handshakes the
+application has never `accept()`ed. Watching it climb (19 → 44 over a few minutes, live) is
+the tell.
+
+#### Why every other check lies — *including the ones added for the last failure*
+
+| Check | Says | Reality |
+|---|---|---|
+| `systemctl --user is-active hermes-dashboard` | **active** | the process is alive |
+| `ss -ltn` on the VM | **LISTEN** | the kernel holds the socket, not the app |
+| `lsof` / `launchctl` on the Mac | **healthy** | irrelevant — the fault is remote |
+| the tunnel supervisor's HTTP probe | **not forwarding** | true, but it blames the tunnel |
+| `curl localhost:9119` **on the VM** | **HTTP 000** | ← the only honest check |
+
+The supervisor added in 0.16.2 does exactly what it was built to do and is still right to do
+it — but **its probe cannot tell a broken tunnel from a wedged agent**, because both present
+as HTTP 000 at `localhost:9119`. It therefore restarts a perfectly healthy tunnel every ~65s,
+forever. That is a reporting gap, not a supervisor bug: *the same symptom now has two causes,
+and only a VM-side probe separates them.*
+
+#### Root cause: catastrophic regex backtracking in the agent's approval guard
+
+The dashboard serves 9119 **and** hosts the agent runtime in the same process. A tool call
+enters `detect_dangerous_command()`, which runs every entry in `DANGEROUS_PATTERNS_COMPILED`
+against the command. One of those patterns
+(`tools/approval_detection.py:337`, the launchd gateway-lifecycle guard) is:
+
+```
+(?=[\s\S]*\blaunchctl\s+(?:stop|kickstart|…)\b)(?=[\s\S]*\b(?:hermes|ai\.hermes)\b)
+```
+
+It is **unanchored, and both branches are lookaheads beginning with `[\s\S]*`**. `re.search`
+retries at all N start positions and each retry rescans to end of string → **O(N²)**, with no
+literal prefix to anchor on. When the command does *not* contain `launchctl` — the normal case
+— the first lookahead never short-circuits, so the full quadratic cost is paid on **every
+ordinary command**.
+
+Python holds the GIL inside `re`, so that one thread starves **every other thread in the
+process**, including uvicorn's accept loop. Captured live with `py-spy`: 1 thread
+`active+gil` in `detect_dangerous_command`, **47 threads parked in `futex_do_wait`**, 13m34s
+of CPU burned on a single `search()`.
+
+Measured against the exact pattern — clean quadratic, and the last row is the **largest input
+the guard permits**:
+
+| command size | time for ONE pattern, ONE variant |
+|---|---|
+| 22 KB | 1.2 s |
+| 44 KB | 4.9 s (2× input → 4× time) |
+| 89 KB | 19.7 s (2× input → 4× time) |
+| **127 KB** | **39.6 s** |
+
+`_command_detection_variants()` yields several variants and each re-runs the whole pattern
+list, so multiply again. The existing size guard does not save you: its limits are
+`128_000` chars / `4_096` separator-free chars / `25_000` separators, and a Python heredoc
+that writes an HTML page is ~10–127 KB with a few thousand newlines — comfortably inside
+all three.
+
+> **This is an upstream Hermes defect, not a fault in this install.** The pattern is present
+> in upstream `6b2d4faf` at the same line; the install's single carried commit is unrelated.
+> Don't hand-patch it on the VM — `hermes-autoupdate` will overwrite it. Report it upstream.
+
+#### What to do
+
+Restart the **dashboard** unit — that is the one that owns 9119 (confirm with
+`cat /proc/<pid>/cgroup`; `hermes-gateway.service` is a *different* process and restarting it
+does nothing here):
+
+```bash
+gcloud compute ssh hermes-agent --zone=europe-west2-b --tunnel-through-iap \
+  --command='systemctl --user restart hermes-dashboard.service'
+```
+
+Recovery is immediate (`http=302`, `Recv-Q` back to 0), and **the Mac side needs no action** —
+the tunnel supervisor reconnects on its own within ~35s. Restarting kills the in-flight agent
+turn, which was never going to finish anyway.
+
+#### Avoiding it
+
+The exposure window is roughly **4 KB–128 KB with at least one newline**. Below ~4 KB the
+quadratic cost is milliseconds; above 128 KB the guard rejects the command outright. So:
+
+- **Write large files with a file-writing tool, not a giant `python3 - <<'EOF'` heredoc.**
+  A heredoc that builds an HTML page is the exact shape that triggers this.
+- Keep single shell commands small; loop over several small ones instead of one huge one.
+
+#### Capturing evidence if it happens again
+
+`py-spy` is the only thing that shows the real cause, and a restart destroys the specimen:
+
+```bash
+python3 -m venv /tmp/pyspy && /tmp/pyspy/bin/pip -q install py-spy
+PID=$(systemctl --user show -p MainPID --value hermes-dashboard.service)
+sudo /tmp/pyspy/bin/py-spy dump --pid $PID --locals    # the active+gil thread is the culprit
+```
+
+> The 0.16.2 lesson generalises: **liveness is not correctness** — and now, *neither is a
+> local correctness check*. A truthful HTTP 200 from the tunnel's own probe still tells you
+> nothing about whether the agent behind it can answer.
 
 ### "The desktop app says Remote gateway sign-in required"
 
