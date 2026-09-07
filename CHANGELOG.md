@@ -39,6 +39,118 @@ version: [CONTRIBUTING.md](CONTRIBUTING.md) has the mechanics.
   `HERMES_DASHBOARD_BASIC_AUTH_PASSWORD_HASH`.
 - Optional: `serpapi-mcp` as an *additional* MCP tool for true Google SERP data,
   alongside SearXNG rather than replacing it.
+- **Proposed: a VM-side dashboard watchdog.** Nothing on the VM notices when the agent
+  stops answering on 9119 (see 0.18.1) — the only watchdog we have runs on the operator's
+  Mac and can only see, and only fix, the tunnel. A `hermes-dashboard-watchdog.timer` that
+  probes `localhost:9119` and restarts `hermes-dashboard.service` after N consecutive
+  failures would close that gap. **Deliberately not shipped here:** auto-restarting the
+  agent on a 24/7 production install is a new failure mode of its own (it would kill live
+  agent turns, and a probe that is wrong restarts a healthy agent in a loop). Wants its own
+  PR, a virgin-install validation, and a decision on whether killing in-flight turns is
+  acceptable.
+
+## [0.18.1] — 2026-09-06
+
+### Fixed — memory backups had never run under systemd
+
+`memory-backup.service` exited **127 on every firing**: its `Environment=PATH` omitted
+`/snap/bin`, and on the Ubuntu GCP image `gcloud` is a snap living **only** at
+`/snap/bin/gcloud` (there is no `/usr/bin/gcloud` — verified 2026-09-06). `memory-backup.sh`
+calls `gcloud storage rsync`, so every timer firing failed and the state backups silently
+did not happen. `/snap/bin` appeared **nowhere** in the install package.
+
+What kept it hidden: **running the script by hand works.** An interactive login shell has
+`/snap/bin` on `PATH`; systemd's does not. Every manual verification of this script has
+therefore always passed, while the scheduled path never once succeeded.
+
+Fixed in `systemd/memory-backup.service` and applied to the live VM; the unit now exits
+`0/SUCCESS` under systemd and the failed-unit list is empty. It is the only **packaged
+script** affected — `memory-backup.sh` is the only one in the install that calls `gcloud`.
+
+> Not fixed here, but worth knowing: `hermes-dashboard.service` omits `/snap/bin` too, and it
+> hosts the agent runtime. Commands the agent shells out to inherit that `PATH`, so an agent
+> turn doing GCP work would not find `gcloud` on `PATH` either. Left alone deliberately —
+> widening the runtime's `PATH` is a behaviour change on a 24/7 install, not a bug fix, and
+> nothing has reported it. Noted so the next person recognises the same shape.
+
+> How long backups had been failing is **undetermined**: the diagnostic run that found this
+> also rsynced the tree, overwriting the bucket timestamps that would have dated it. Known
+> good: failing at the 20:01:35 UTC firing, succeeding under systemd afterwards.
+
+### Documented — the gateway failure that is not the gateway's fault, and not credentials
+
+Hit live **2026-09-06**, on Hermes **v0.21.0**, and initially read as the 0.16.2 credential
+lapse because *every local signal is identical*. It is not. The tunnel, the credentials, the
+service account, the firewall and the VM were all healthy throughout. **The agent itself had
+stopped answering**, and no Mac-side action could have fixed it.
+
+Ruled out with evidence, not assumption: the tunnel hangs identically under **user creds and
+service-account creds**; a probe **from inside the VM** also returns `000`; there was no OOM
+kill and 12.9–13.7 GB of 16 GB stayed free throughout (**it was not memory**); and
+`hermes-autoupdate` last ran 13 hours earlier.
+
+**The signature:** `curl localhost:9119` **on the VM** returns `000` while `ss -ltn` still
+shows `LISTEN` — and the `Recv-Q` column on that LISTEN row climbs (19 → 44, live) because
+those are completed TCP handshakes the application never `accept()`ed.
+
+**Root cause — catastrophic regex backtracking (ReDoS) in the agent's approval guard.** The
+launchd gateway-lifecycle pattern at `tools/approval_detection.py:337` is unanchored and
+*both* of its branches are lookaheads starting with `[\s\S]*`, so `re.search` retries at all
+N start positions and rescans to end each time: **O(N²)**. When the command contains no
+`launchctl` — the normal case — nothing short-circuits and the full quadratic cost is paid on
+**every ordinary command**. Python holds the GIL inside `re`, so one thread starves the whole
+process, uvicorn's accept loop included. Captured with `py-spy`: one thread `active+gil` in
+`detect_dangerous_command`, **47 threads parked in `futex_do_wait`**, 13m34s of CPU in a
+single `search()`.
+
+Measured against the exact pattern — the last row is the **largest input the guard allows**:
+
+| command size | one pattern, one variant |
+|---|---|
+| 22 KB | 1.2 s |
+| 44 KB | 4.9 s |
+| 89 KB | 19.7 s |
+| **127 KB** | **39.6 s** |
+
+The existing size guard (`128_000` chars / `4_096` separator-free / `25_000` separators) does
+not help: a `python3 - <<'EOF'` heredoc that writes an HTML page is ~10–127 KB with a few
+thousand newlines and passes all three. That is exactly how it was triggered — twice,
+reproducibly, by an agent turn generating a 90 KB HTML page.
+
+> **Upstream defect, not an install fault.** The pattern is in upstream `6b2d4faf` at the
+> same line; the install's single carried commit is unrelated. Do **not** hand-patch the VM —
+> `hermes-autoupdate` overwrites it. Report upstream.
+
+**Operational fallout this exposes:** the 0.16.2 tunnel supervisor does its job correctly and
+still misleads, because **its HTTP probe cannot distinguish a broken tunnel from a wedged
+agent** — both are `HTTP 000` at `localhost:9119`. It restarted a healthy tunnel every ~65s
+for hours. And `OPS-NOTES.md` opened this symptom with *"Check credentials first"*, which is
+right for one cause and a dead end for the other.
+
+- **`OPS-NOTES.md`** gains *"The gateway wedges with the port still open (remote side)"* —
+  the VM-side probe that separates the two causes, the `Recv-Q` tell, a table of which
+  checks lie, the measured numbers, the `py-spy` recipe for capturing the specimen before a
+  restart destroys it, and the avoidance rule (**write large files with a file-writing tool,
+  not a giant heredoc**; the exposure window is ~4 KB–128 KB with a newline).
+- The existing credential section now **starts** by splitting local from remote, instead of
+  sending you to `gcloud auth login` for a fault that has nothing to do with credentials.
+  The split is read in **three** branches, not two: the diagnostic `gcloud compute ssh`
+  authenticates with your *user* credentials, so **whether the SSH succeeds at all** is the
+  first signal — a genuine credential lapse makes that command fail outright rather than
+  return a discriminating `302`. (And since 0.17.1 the tunnel authenticates as a service
+  account, so your user credentials expiring does not imply the tunnel is down.)
+- Recovery is `systemctl --user restart hermes-dashboard.service` — the **dashboard** unit
+  owns 9119 (`hermes-gateway.service` is a different process; restarting it does nothing).
+  The Mac needs no action: the supervisor reconnects itself in ~35s.
+
+### Not yet validated
+
+- ⚠️ **The `memory-backup.service` PATH fix has not been rebuilt from a virgin install.** It
+  was verified on the live 24/7 VM (unit patched, `daemon-reload`, run under systemd, exit
+  `0/SUCCESS`, failed-unit list empty) — which is exactly the "re-run over a live VM" the
+  from-scratch rule in `AGENTS.md` says not to sign off on. The change is a one-token PATH
+  append, but per that rule it wants a teardown → 01 → 02 → 03 pass before it counts as
+  proven. The ReDoS half of this entry is a diagnosis and doc change; it installs nothing.
 
 ---
 

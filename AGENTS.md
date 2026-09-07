@@ -494,6 +494,30 @@ docs, keyed to our setup): [`gcp/REFERENCE.md`](gcp/REFERENCE.md).
   its own, but since v0.12.0 `MEMORY_LLM_BACKEND=vertex` routes it through the local shim,
   so it needs **no** AI-Studio key either — this install has zero external API keys.
 
+- **"Gateway offline" has TWO causes that look identical, and the documented fix only
+  addresses one.** Expired gcloud credentials (0.16.2) *and* a wedged agent on the VM both
+  present as `HTTP 000` at `localhost:9119` — same app message, same supervisor log, same
+  `launchctl`/`lsof` output. The **only** thing that separates them is probing 9119 **from
+  inside the VM** over `gcloud compute ssh --tunnel-through-iap`, read in three branches —
+  **the SSH itself is the first signal**, since it uses *your user* credentials: SSH fails →
+  your credentials/IAP (note the tunnel authenticates as a *service account* since 0.17.1, so
+  it may still be fine); SSH works + `000` → the agent stopped answering and nothing you do on
+  the Mac will help; SSH works + `302` → agent healthy, fault is the local tunnel. For the
+  `000` case restart `hermes-dashboard.service` (the **dashboard**
+  unit owns 9119 — `hermes-gateway.service` is a different process). Root cause of the remote
+  half, 2026-09-06 on Hermes v0.21.0: **catastrophic regex backtracking** in
+  `tools/approval_detection.py:337` — an unanchored double-lookahead pattern, O(N²), which
+  holds the GIL and starves uvicorn's accept loop. A ~90 KB heredoc that writes an HTML page
+  triggers it (~40 s per pattern per variant); the exposure window is ~4 KB–128 KB. **Upstream
+  defect — don't hand-patch the VM, autoupdate overwrites it.** Full workup in
+  `gcp/vpc-install/OPS-NOTES.md`.
+- **systemd user units need `/snap/bin` on `PATH` if they call `gcloud`.** On the Ubuntu GCP
+  image gcloud is a snap at `/snap/bin/gcloud` and there is no `/usr/bin/gcloud`. This broke
+  `memory-backup.service` (exit **127**, backups silently never ran). It hid indefinitely
+  because **running the script by hand works** — an interactive login shell has `/snap/bin`,
+  systemd's `Environment=PATH` did not. When a unit works manually and fails under systemd,
+  suspect `PATH` before the script.
+
 ## Ops quick reference
 
 ```bash
