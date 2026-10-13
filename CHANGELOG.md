@@ -26,6 +26,23 @@ version: [CONTRIBUTING.md](CONTRIBUTING.md) has the mechanics.
 
 ---
 
+## [0.18.2] — 2026-10-13
+
+### Added
+
+- **`gcp/vpc-install/MEMORY-CHOICE.md`** — decision note answering "built-in memory, or a
+  third party?", a question that recurs on every handover. Records that there are three
+  options (built-in / self-hosted Honcho / hosted memory SaaS), that the deciding
+  constraint is per-employee separation for the Slack bot, and that hosted memory SaaS is
+  ruled out on EU residency, the no-external-keys posture and subprocessor cost.
+  Verdict: keep self-hosted Honcho. Linked from `OPS-NOTES.md` §6 and the README repo map.
+- Restates the standing condition on that verdict: **Honcho's Postgres is still not backed
+  up on any timer.** `OPS-NOTES.md` §6 documents both `pg_dumpall` and a disk snapshot, but
+  neither is scheduled — so per-employee memory is not yet a system of record. No code
+  change here; this records the gap and ties it to the memory choice that depends on it.
+
+---
+
 ## [Unreleased]
 
 - **Exercise the virgin-install rule at least once.** v0.14.1 added the rule and

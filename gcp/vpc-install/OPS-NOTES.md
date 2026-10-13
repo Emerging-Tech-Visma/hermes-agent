@@ -501,7 +501,10 @@ sudo growpart /dev/sda 1 && sudo resize2fs /dev/sda1 && df -h /
 ## 6. Backup and restore
 
 The hourly timer backs up `~/.hermes` to GCS, **excluding** `.env`, caches, and lock
-files. Honcho's Postgres data lives in a Docker volume and is **not** covered.
+files. Honcho's Postgres data lives in a Docker volume and is **not** covered —
+see the dump and snapshot recipes later in this section, and
+[MEMORY-CHOICE.md](MEMORY-CHOICE.md) §5 for why that gap is a condition on running
+Honcho as the memory backend at all.
 
 ```bash
 # Force a backup and check it
