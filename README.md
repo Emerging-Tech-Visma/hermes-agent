@@ -14,7 +14,7 @@ Chrome 151, Vertex **`gemini-3.8-flash`** @ `global` (+ `gemini-3.7-flash` and
 > 2026-09-04). The live box above still runs 3.7-flash until the install is re-run —
 > this line will be updated when it is re-probed.
 
-[![version](https://img.shields.io/badge/version-0.18.1-blue)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.18.2-blue)](CHANGELOG.md)
 [![Hermes](https://img.shields.io/badge/Hermes-v0.21.0-8A2BE2)](https://hermes-agent.nousresearch.com)
 [![data](https://img.shields.io/badge/data-europe--west2-green)](#eu-data-residency)
 [![inference](https://img.shields.io/badge/inference-vertex%20global-yellow)](#eu-data-residency)
@@ -214,6 +214,10 @@ human credential. Service-account credentials are exempt from reauth. Full reaso
 | Search | Self-hosted **SearXNG** | native Hermes backend, no API key, no hosted-SaaS query log |
 | Browser | Chrome + Playwright Chromium, headless | real browser automation on the VM |
 | Memory | Self-hosted **Honcho** (Postgres/pgvector) **on Vertex** | per-user memory modelling; **zero external API keys** via a local OpenAI-compat shim |
+
+> Why Honcho rather than Hermes' built-in `MEMORY.md`/`USER.md`, and why not a hosted
+> memory SaaS: [`MEMORY-CHOICE.md`](gcp/vpc-install/MEMORY-CHOICE.md).
+
 | Client | Hermes Desktop app or browser, over IAP | thin client; all compute remote |
 | Auth | One attached service account | **no key files anywhere** |
 
